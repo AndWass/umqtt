@@ -1,5 +1,4 @@
 use bytes::{Bytes, BytesMut};
-use crate::mqttbytes::QoS;
 use crate::mqttbytes::v4::{ConnAck, ConnectReturnCode, LastWill, Login, Packet, PubAck, Publish, SubAck, UnsubAck};
 use crate::time::Instant;
 
@@ -58,17 +57,14 @@ pub enum State {
 ///
 pub struct TransportClient {
     bytes: BytesMut,
-    options: ClientOptions,
+    keep_alive: core::time::Duration,
     state: State,
     max_packet_size: usize,
     packet_send_at: Instant,
 }
 
 impl TransportClient {
-    fn keep_alive_seconds(&self) -> u64 {
-        self.options.keep_alive as u64
-    }
-
+    const ZERO_KEEP_ALIVE: core::time::Duration = core::time::Duration::from_secs(0);
     /// Create a new transport client, with a maximum receive packet size set
     ///
     /// # Arguments
@@ -82,7 +78,7 @@ impl TransportClient {
     pub fn new(max_packet_size: usize) -> Self {
         Self {
             bytes: BytesMut::new(),
-            options: ClientOptions::default(),
+            keep_alive: core::time::Duration::from_secs(0),
             state: State::Disconnected,
             max_packet_size,
             packet_send_at: Instant::from_seconds_since_epoch(0),
@@ -102,15 +98,15 @@ impl TransportClient {
     ///
     /// A complete `Connect` message to be sent to the broker.
     ///
-    pub fn on_transport_opened(&mut self, options: ClientOptions) -> Bytes {
+    pub fn on_transport_opened(&mut self, options: &ClientOptions) -> Bytes {
         self.bytes.clear();
-        self.options = options;
-        let mut connect = crate::mqttbytes::v4::Connect::new(self.options.client_id.as_str());
-        connect.keep_alive = self.options.keep_alive;
-        connect.clean_session = self.options.clean_session;
-        connect.last_will = self.options.last_will.take();
+        self.keep_alive = core::time::Duration::from_secs(options.keep_alive.into());
+        let mut connect = crate::mqttbytes::v4::Connect::new(options.client_id.as_str());
+        connect.keep_alive = options.keep_alive;
+        connect.clean_session = options.clean_session;
+        connect.last_will = options.last_will.clone();
         connect.protocol = crate::mqttbytes::Protocol::V4;
-        connect.login = self.options.login.take();
+        connect.login = options.login.clone();
         let mut buffer = BytesMut::new();
         let _written = connect.write(&mut buffer).unwrap();
         self.packet_send_at = Instant::from_seconds_since_epoch(0);
@@ -126,8 +122,8 @@ impl TransportClient {
     ///   * `now`: The time since some unspecified epoch.
     ///
     pub fn on_packet_sent(&mut self, now: Instant) {
-        if self.options.keep_alive > 0 {
-            self.packet_send_at = now.add_seconds(self.keep_alive_seconds());
+        if self.keep_alive > Self::ZERO_KEEP_ALIVE {
+            self.packet_send_at = now + self.keep_alive;
         }
     }
 
@@ -190,7 +186,7 @@ impl TransportClient {
     }
 
     pub fn next_ping_in(&self, now: Instant) -> Option<core::time::Duration> {
-        if self.options.keep_alive > 0 {
+        if self.keep_alive > Self::ZERO_KEEP_ALIVE {
             Some(self.packet_send_at - now)
         }
         else {
