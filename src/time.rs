@@ -1,5 +1,5 @@
 use core::ops::{Sub, SubAssign, Add, AddAssign};
-use std::time::Duration;
+use core::time::Duration;
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy)]
 pub struct Instant {

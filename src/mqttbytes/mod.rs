@@ -5,7 +5,7 @@
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use core::fmt;
-use std::slice::Iter;
+use core::slice::Iter;
 
 mod topic;
 pub mod v4;
@@ -60,8 +60,6 @@ pub enum Error {
     /// proceed further
     #[error("At least {0} more bytes required to frame packet")]
     InsufficientBytes(usize),
-    #[error("IO: {0}")]
-    Io(#[from] std::io::Error),
     #[error("Cannot send packet of size '{pkt_size:?}'. It's greater than the broker's maximum packet size of: '{max:?}'")]
     OutgoingPacketTooLarge { pkt_size: usize, max: usize },
 }
@@ -91,21 +89,6 @@ pub enum PacketType {
 pub enum Protocol {
     V4,
     V5,
-}
-
-/// Quality of service
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
-pub enum QoS {
-    AtMostOnce = 0,
-    AtLeastOnce = 1,
-    ExactlyOnce = 2,
-}
-
-impl Default for QoS {
-    fn default() -> Self {
-        QoS::AtMostOnce
-    }
 }
 
 /// Packet type from a byte

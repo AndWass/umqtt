@@ -1,6 +1,6 @@
 use super::*;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::convert::{TryFrom, TryInto};
+use core::convert::{TryFrom, TryInto};
 
 /// Acknowledgement to subscribe
 #[derive(Debug, Clone, PartialEq, Eq)]
