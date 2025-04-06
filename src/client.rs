@@ -1,14 +1,22 @@
-use crate::packetview::connect::{ConnAck, ConnectOptions, ConnectReturnCode};
+use crate::packetview::connack::{ConnAck, ConnectReturnCode};
+use crate::packetview::connect::{ConnectOptions};
 use crate::packetview::Error;
 use crate::packetview::packet::Packet;
+use crate::packetview::puback::PubAck;
+use crate::packetview::pubcomp::PubComp;
 use crate::packetview::publish::Publish;
+use crate::packetview::pubrec::PubRec;
+use crate::packetview::pubrel::PubRel;
 use crate::time::Instant;
 
 pub enum Notification<'a> {
     ConnAck(ConnAck),
     Publish(Publish<'a>),
-    /*PubAck(PubAck),
-    SubAck(SubAck),
+    PubAck(PubAck),
+    PubRec(PubRec),
+    PubRel(PubRel),
+    PubComp(PubComp),
+    /*SubAck(SubAck),
     UnsubAck(UnsubAck),*/
     PingResponse,
     Disconnected,
@@ -70,6 +78,7 @@ impl TransportClient {
     pub fn on_transport_opened(&mut self, options: &ConnectOptions) {
         self.keep_alive = core::time::Duration::from_secs(options.keep_alive.into());
         self.packet_send_at = Instant::from_seconds_since_epoch(0);
+        self.state = State::TransportConnected;
     }
 
     /// Tell the client that a packet has been sent.
@@ -92,17 +101,41 @@ impl TransportClient {
         self.state = State::Disconnected;
     }
 
-    /// Add received bytes to the transport client
+    /// Call when new bytes have been received
     ///
-    /// Bytes received on the transport are buffered. A client
-    /// should typically call [`next_notification`] after bytes has been added.
+    /// This will attempt to parse a packet from the slice of bytes, and if successful
+    /// it will return a parsed packet and the amount of bytes taken.
     ///
-    pub fn on_bytes_received<'a>(&mut self, data: &'a [u8]) -> Result<Option<(Notification<'a>, usize)>, crate::packetview::Error> {
+    /// When a packet is successfully parsed the upper layer should remove all the taken bytes
+    /// from its buffer.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use umqtt::client::TransportClient;
+    /// use umqtt::client::Notification;
+    /// use umqtt::packetview::connect::ConnectOptions;
+    /// let mut client = TransportClient::new(256);
+    /// client.on_transport_opened(&ConnectOptions::default());
+    /// let mut data = vec![0xD0, 0, 0xD0, 0];
+    /// let (pingresp, taken) = client.on_bytes_received(data.as_slice()).unwrap().unwrap();
+    /// assert_eq!(taken, 2);
+    /// assert!(matches!(pingresp, Notification::PingResponse));
+    /// data.drain(0..2);
+    /// let (pingresp, taken) = client.on_bytes_received(data.as_slice()).unwrap().unwrap();
+    /// assert_eq!(taken, 2);
+    /// assert!(matches!(pingresp, Notification::PingResponse));
+    /// data.drain(0..2);
+    /// let res = client.on_bytes_received(data.as_slice()).unwrap();
+    /// assert!(matches!(res, None));
+    /// ```
+    ///
+    pub fn on_bytes_received<'a>(&mut self, data: &'a [u8]) -> Result<Option<(Notification<'a>, usize)>, Error> {
         if matches!(self.state, State::Disconnected) {
             return Ok(Some((Notification::Disconnected, 0)));
         }
         match Packet::read(data, self.max_packet_size) {
-            Err(crate::packetview::Error::NeedMoreData(_)) => Ok(None),
+            Err(Error::NeedMoreData(_)) => Ok(None),
             Err(x) => {
                 self.state = State::Disconnected;
                 Err(x)
@@ -118,29 +151,18 @@ impl TransportClient {
                 }
             },
             Ok((Packet::Publish(publish), taken)) => Ok(Some((Notification::Publish(publish), taken))),
-            /*Ok(Packet::PubAck(ack)) => Ok(Some(Notification::PubAck(ack))),
-            Ok(Packet::SubAck(ack)) => Ok(Some(Notification::SubAck(ack))),
+            Ok((Packet::PubAck(ack), taken)) => Ok(Some((Notification::PubAck(ack), taken))),
+            Ok((Packet::PubRec(rec), taken)) => Ok(Some((Notification::PubRec(rec), taken))),
+            Ok((Packet::PubRel(rel), taken)) => Ok(Some((Notification::PubRel(rel), taken))),
+            Ok((Packet::PubComp(comp), taken)) => Ok(Some((Notification::PubComp(comp), taken))),
+            /*Ok(Packet::SubAck(ack)) => Ok(Some(Notification::SubAck(ack))),
             Ok(Packet::UnsubAck(ack)) => Ok(Some(Notification::UnsubAck(ack))),*/
             Ok((Packet::PingResp, taken)) => Ok(Some((Notification::PingResponse, taken))),
             _ => {
                 self.state = State::Disconnected;
-                Err(Error::MalformedPacket)
+                Err(Error::UnsupportedPacket)
             }
         }
-    }
-
-    /// Get the next pending notification based on the received bytes
-    ///
-    /// This should be called in a loop until `None` or [`Notification::Disconnected`] is returned.
-    ///
-    /// # Returns
-    ///
-    ///   * `None`: More bytes are needed
-    /// The next notification based on the buffered received bytes.
-    ///
-    /// If the [`state()`] returns [`State::Disconnected`]
-    pub fn next_notification(&mut self) -> Result<Option<Notification>, crate::packetview::Error> {
-        todo!()
     }
 
     pub fn next_ping_in(&self, now: Instant) -> Option<core::time::Duration> {
