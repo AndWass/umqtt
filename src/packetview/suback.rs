@@ -4,7 +4,7 @@ use crate::packetview::cursor::{Cursor, WriteCursor};
 
 pub struct BytesIterator<'a>(core::slice::Iter<'a, u8>);
 
-impl<'a> Iterator for BytesIterator<'a> {
+impl Iterator for BytesIterator<'_> {
     type Item = SubscribeReasonCode;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -17,7 +17,7 @@ pub enum StorageIter<'a> {
     Bytes(BytesIterator<'a>),
 }
 
-impl<'a> Iterator for StorageIter<'a> {
+impl Iterator for StorageIter<'_> {
     type Item = SubscribeReasonCode;
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -41,7 +41,7 @@ impl<'a> Storage<'a> {
         }
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         match self {
             Storage::Slice(s) => s.len(),
             Storage::Bytes(b) => b.len(),
@@ -49,17 +49,17 @@ impl<'a> Storage<'a> {
     }
 }
 
-impl<'a> core::fmt::Debug for Storage<'a> {
+impl core::fmt::Debug for Storage<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         for c in self.iter() {
-            write!(f, "{:?}\n", c)?;
+            writeln!(f, "{:?}", c)?;
         }
 
         Ok(())
     }
 }
 
-impl<'a> PartialEq for Storage<'a> {
+impl PartialEq for Storage<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.iter().eq(other.iter())
     }

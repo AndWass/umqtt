@@ -9,7 +9,7 @@ impl<'a> Iterator for WireBytesIter<'a> {
         let slice = self.0.as_slice();
         let mut cursor = Cursor(slice);
         let res = read_mqtt_string(&mut cursor).ok()?;
-        self.0 = (&slice[2+res.as_bytes().len()..]).iter();
+        self.0 = slice[2+res.len()..].iter();
         Some(res)
     }
 }
@@ -44,7 +44,7 @@ impl<'a> Storage<'a> {
     }
 }
 
-impl<'a> Debug for Storage<'a> {
+impl Debug for Storage<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         for t in self.iter() {
             write!(f, "{:?}", t)?;
@@ -54,7 +54,7 @@ impl<'a> Debug for Storage<'a> {
     }
 }
 
-impl<'a> PartialEq for Storage<'a> {
+impl PartialEq for Storage<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.iter().eq(other.iter())
     }

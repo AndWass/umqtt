@@ -41,16 +41,16 @@ impl<'a> Storage<'a> {
     }
 }
 
-impl<'a> core::fmt::Debug for Storage<'a> {
+impl core::fmt::Debug for Storage<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         for x in self.iter() {
-            write!(f, "{{{:?}}}\n", x)?;
+            writeln!(f, "{{{:?}}}", x)?;
         }
         Ok(())
     }
 }
 
-impl<'a> PartialEq for Storage<'a> {
+impl PartialEq for Storage<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.iter().eq(other.iter())
     }
@@ -179,7 +179,7 @@ pub enum RetainForwardRule {
     Never,
 }
 
-impl<'a> core::fmt::Debug for Subscribe<'a> {
+impl core::fmt::Debug for Subscribe<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -189,7 +189,7 @@ impl<'a> core::fmt::Debug for Subscribe<'a> {
     }
 }
 
-impl<'a> core::fmt::Debug for SubscribeFilter<'a> {
+impl core::fmt::Debug for SubscribeFilter<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Filter = {}, Qos = {:?}", self.path, self.qos)
     }
