@@ -114,8 +114,8 @@ impl TransportClient {
     /// # Example
     ///
     /// ```
-    /// use umqtt::client::TransportClient;
-    /// use umqtt::client::Notification;
+    /// use umqtt::transport_client::TransportClient;
+    /// use umqtt::transport_client::Notification;
     /// use umqtt::packetview::connect::ConnectOptions;
     /// let mut client = TransportClient::new(256);
     /// client.on_transport_opened(&ConnectOptions::default());
