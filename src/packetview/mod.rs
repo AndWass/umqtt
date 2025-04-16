@@ -29,7 +29,8 @@ pub enum Error {
     InvalidConnectReturnCode(u8),
     PacketIdZero,
     UnsupportedPacket,
-    InvalidSubscribeReasonCode(u8)
+    InvalidSubscribeReasonCode(u8),
+    UnexpectedPacket(PacketType),
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]

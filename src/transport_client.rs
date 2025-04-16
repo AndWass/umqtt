@@ -1,6 +1,6 @@
 use crate::packetview::connack::{ConnAck, ConnectReturnCode};
 use crate::packetview::connect::{ConnectOptions};
-use crate::packetview::Error;
+use crate::packetview::{Error, PacketType};
 use crate::packetview::packet::Packet;
 use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
@@ -133,24 +133,42 @@ impl TransportClient {
     /// ```
     ///
     pub fn on_bytes_received<'a>(&mut self, data: &'a [u8]) -> Result<Option<(Notification<'a>, usize)>, Error> {
-        if matches!(self.state, State::Disconnected) {
-            return Ok(Some((Notification::Disconnected, 0)));
-        }
+        match self.state {
+            State::Disconnected => return Ok(Some((Notification::Disconnected, 0))),
+            State::TransportConnected => {
+                return match Packet::read(data, self.max_packet_size) {
+                    Err(Error::NeedMoreData(_)) => Ok(None),
+                    Err(x) => {
+                        self.state = State::Disconnected;
+                        Err(x)
+                    },
+                    Ok((Packet::ConnAck(c), taken)) => {
+                        if c.code == ConnectReturnCode::Success {
+                            self.state = State::Connected;
+                            Ok(Some((Notification::ConnAck(c), taken)))
+                        }
+                        else {
+                            self.state = State::Disconnected;
+                            Ok(Some((Notification::Disconnected, 0)))
+                        }
+                    },
+                    Ok((p, _)) => {
+                        self.state = State::Disconnected;
+                        Err(Error::UnexpectedPacket(p.packet_type()))
+                    }
+                };
+            },
+            State::Connected => {}
+        };
         match Packet::read(data, self.max_packet_size) {
             Err(Error::NeedMoreData(_)) => Ok(None),
             Err(x) => {
                 self.state = State::Disconnected;
                 Err(x)
             },
-            Ok((Packet::ConnAck(c), taken)) => {
-                if c.code == ConnectReturnCode::Success {
-                    self.state = State::Connected;
-                    Ok(Some((Notification::ConnAck(c), taken)))
-                }
-                else {
-                    self.state = State::Disconnected;
-                    Ok(Some((Notification::Disconnected, 0)))
-                }
+            Ok((Packet::ConnAck(_), _taken)) => {
+                self.state = State::Disconnected;
+                Err(Error::UnexpectedPacket(PacketType::ConnAck))
             },
             Ok((Packet::Publish(publish), taken)) => Ok(Some((Notification::Publish(publish), taken))),
             Ok((Packet::PubAck(ack), taken)) => Ok(Some((Notification::PubAck(ack), taken))),

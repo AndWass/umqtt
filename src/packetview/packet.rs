@@ -74,6 +74,25 @@ impl<'a> Packet<'a> {
         let parsed = Self::read_exact(fixed_header, packet)?;
         Ok((parsed, packet.len()))
     }
+
+    pub fn packet_type(&self) -> PacketType {
+        match self {
+            Packet::Connect(_) => PacketType::Connect,
+            Packet::ConnAck(_) => PacketType::ConnAck,
+            Packet::Publish(_) => PacketType::Publish,
+            Packet::PubAck(_) => PacketType::PubAck,
+            Packet::PubRec(_) => PacketType::PubRec,
+            Packet::PubRel(_) => PacketType::PubRel,
+            Packet::PubComp(_) => PacketType::PubComp,
+            Packet::Subscribe(_) => PacketType::Subscribe,
+            Packet::SubAck(_) => PacketType::SubAck,
+            Packet::Unsubscribe(_) => PacketType::Unsubscribe,
+            Packet::UnsubAck(_) => PacketType::UnsubAck,
+            Packet::PingReq => PacketType::PingReq,
+            Packet::PingResp => PacketType::PingResp,
+            Packet::Disconnect => PacketType::Disconnect,
+        }
+    }
 }
 
 pub struct PacketReadData<'a> {
