@@ -7,6 +7,8 @@ use crate::packetview::pubcomp::PubComp;
 use crate::packetview::publish::Publish;
 use crate::packetview::pubrec::PubRec;
 use crate::packetview::pubrel::PubRel;
+use crate::packetview::suback::SubAck;
+use crate::packetview::unsuback::UnsubAck;
 use crate::time::Instant;
 
 pub enum Notification<'a> {
@@ -16,8 +18,8 @@ pub enum Notification<'a> {
     PubRec(PubRec),
     PubRel(PubRel),
     PubComp(PubComp),
-    /*SubAck(SubAck),
-    UnsubAck(UnsubAck),*/
+    SubAck(SubAck<'a>),
+    UnsubAck(UnsubAck),
     PingResponse,
     Disconnected,
 }
@@ -155,8 +157,8 @@ impl TransportClient {
             Ok((Packet::PubRec(rec), taken)) => Ok(Some((Notification::PubRec(rec), taken))),
             Ok((Packet::PubRel(rel), taken)) => Ok(Some((Notification::PubRel(rel), taken))),
             Ok((Packet::PubComp(comp), taken)) => Ok(Some((Notification::PubComp(comp), taken))),
-            /*Ok(Packet::SubAck(ack)) => Ok(Some(Notification::SubAck(ack))),
-            Ok(Packet::UnsubAck(ack)) => Ok(Some(Notification::UnsubAck(ack))),*/
+            Ok((Packet::SubAck(ack), taken)) => Ok(Some((Notification::SubAck(ack), taken))),
+            Ok((Packet::UnsubAck(ack), taken)) => Ok(Some((Notification::UnsubAck(ack), taken))),
             Ok((Packet::PingResp, taken)) => Ok(Some((Notification::PingResponse, taken))),
             _ => {
                 self.state = State::Disconnected;
