@@ -132,6 +132,19 @@ pub struct ConnectOptions<'a> {
     pub clean_session: bool,
 }
 
+impl<'a> ConnectOptions<'a> {
+    pub fn as_connect(&self) -> Connect<'a> {
+        Connect {
+            clean_session: self.clean_session,
+            keep_alive: self.keep_alive,
+            client_id: self.client_id,
+            login: self.login.clone(),
+            last_will: self.last_will.clone(),
+            protocol: Protocol::V4,
+        }
+    }
+}
+
 /// Connection packet initiated by the client
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Connect<'a> {
@@ -207,11 +220,12 @@ impl<'a> Connect<'a> {
         len
     }
 
-    pub fn write(&self, buffer: &mut WriteCursor) -> Result<(), WriteError> {
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        let mut buffer = WriteCursor::new(buffer);
         let len = self.len();
         buffer.put_u8(0b0001_0000)?;
-        write_remaining_length(buffer, len)?;
-        write_mqtt_string(buffer, "MQTT")?;
+        write_remaining_length(&mut buffer, len)?;
+        write_mqtt_string(&mut buffer, "MQTT")?;
 
         match self.protocol {
             Protocol::V4 => buffer.put_u8(0x04)?,
@@ -226,19 +240,19 @@ impl<'a> Connect<'a> {
         let connect_flags_index = buffer.bytes_written();
         buffer.put_u8(connect_flags)?;
         buffer.put_u16(self.keep_alive)?;
-        write_mqtt_string(buffer, self.client_id)?;
+        write_mqtt_string(&mut buffer, self.client_id)?;
 
         if let Some(last_will) = &self.last_will {
-            connect_flags |= last_will.write(buffer)?;
+            connect_flags |= last_will.write(&mut buffer)?;
         }
 
         if let Some(login) = &self.login {
-            connect_flags |= login.write(buffer)?;
+            connect_flags |= login.write(&mut buffer)?;
         }
 
         buffer[connect_flags_index] = connect_flags;
 
-        Ok(())
+        Ok(buffer.bytes_written())
     }
 }
 
@@ -373,9 +387,8 @@ mod test {
         };
 
         let mut buffer = [0u8; 256];
-        let mut cursor = WriteCursor::new(&mut buffer);
-        connect.write(&mut cursor).unwrap();
+        let written = connect.write(&mut buffer).unwrap();
 
-        assert_eq!(cursor.written_slice(), sample_bytes());
+        assert_eq!(&buffer[..written], sample_bytes());
     }
 }

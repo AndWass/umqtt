@@ -80,9 +80,9 @@ pub struct Subscribe<'a> {
 }
 
 impl<'a> Subscribe<'a> {
-    pub fn new(filters: &'a [SubscribeFilter<'a>]) -> Self {
+    pub fn new(packet_id: u16, filters: &'a [SubscribeFilter<'a>]) -> Self {
         Self {
-            pkid: 0,
+            pkid: packet_id,
             filters: Storage::Slice(filters),
         }
     }
@@ -125,23 +125,24 @@ impl<'a> Subscribe<'a> {
         }
     }
 
-    pub fn write(&self, buffer: &mut WriteCursor) -> Result<(), WriteError> {
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        let mut buffer = WriteCursor::new(buffer);
         // write packet type
         buffer.put_u8(0x82)?;
 
         // write remaining length
         let remaining_len = self.len();
-        write_remaining_length(buffer, remaining_len)?;
+        write_remaining_length(&mut buffer, remaining_len)?;
 
         // write packet id
         buffer.put_u16(self.pkid)?;
 
         // write filters
         for filter in self.filters.iter() {
-            filter.write(buffer)?;
+            filter.write(&mut buffer)?;
         }
 
-        Ok(())
+        Ok(buffer.bytes_written())
     }
 }
 
@@ -260,10 +261,9 @@ mod test {
         };
 
         let mut buf = [0u8; 256];
-        let mut cursor = WriteCursor::new(&mut buf);
-        subscribe.write(&mut cursor).unwrap();
+        let written = subscribe.write(&mut buf).unwrap();
         assert_eq!(
-            cursor.written_slice(),
+            &buf[..written],
             &[
                 0b1000_0010,
                 20,

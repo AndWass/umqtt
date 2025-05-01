@@ -63,15 +63,16 @@ impl ConnAck {
         Ok(connack)
     }
 
-    pub fn write(&self, buffer: &mut WriteCursor) -> Result<(), WriteError> {
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        let mut buffer = WriteCursor::new(buffer);
         let len = self.len();
         buffer.put_u8(0x20)?;
 
-        write_remaining_length(buffer, len)?;
+        write_remaining_length(&mut buffer, len)?;
         buffer.put_u8(self.session_present as u8)?;
         buffer.put_u8(self.code as u8)?;
 
-        Ok(())
+        Ok(buffer.bytes_written())
     }
 }
 
@@ -115,8 +116,7 @@ mod tests {
         };
 
         let mut buffer = [0u8; 256];
-        let mut cursor = WriteCursor::new(&mut buffer);
-        connack.write(&mut cursor).unwrap();
-        assert_eq!(cursor.written_slice(), [0b0010_0000, 0x02, 0x01, 0x00]);
+        let bytes_written = connack.write(&mut buffer).unwrap();
+        assert_eq!(&buffer[..bytes_written], [0b0010_0000, 0x02, 0x01, 0x00]);
     }
 }

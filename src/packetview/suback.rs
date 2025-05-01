@@ -99,10 +99,11 @@ impl<'a> SubAck<'a> {
         Ok(suback)
     }
 
-    pub fn write(&self, buffer: &mut WriteCursor) -> Result<(), WriteError> {
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        let mut buffer = WriteCursor::new(buffer);
         buffer.put_u8(0x90)?;
         let remaining_len = self.len();
-        write_remaining_length(buffer, remaining_len)?;
+        write_remaining_length(&mut buffer, remaining_len)?;
 
         buffer.put_u16(self.pkid)?;
         for code in self.return_codes.iter() {
@@ -112,7 +113,7 @@ impl<'a> SubAck<'a> {
             };
             buffer.put_u8(byte)?;
         }
-        Ok(())
+        Ok(buffer.bytes_written())
     }
 }
 

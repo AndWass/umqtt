@@ -1,9 +1,10 @@
 use crate::packetview::cursor::{Cursor, WriteCursor};
 
+mod cursor;
+
 pub mod connect;
 pub mod packet;
 pub mod publish;
-mod cursor;
 pub mod puback;
 pub mod pubrec;
 pub mod connack;
@@ -13,6 +14,8 @@ pub mod subscribe;
 pub mod suback;
 pub mod unsubscribe;
 pub mod unsuback;
+mod ping;
+mod disconnect;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub enum Error {
@@ -35,6 +38,7 @@ pub enum Error {
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub enum WriteError {
+    MalformedPacket,
     NotEnoughCapacity,
     PayloadTooLong
 }

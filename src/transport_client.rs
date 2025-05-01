@@ -11,6 +11,7 @@ use crate::packetview::suback::SubAck;
 use crate::packetview::unsuback::UnsubAck;
 use crate::time::Instant;
 
+#[derive(Debug)]
 pub enum Notification<'a> {
     ConnAck(ConnAck),
     Publish(Publish<'a>),
@@ -69,9 +70,6 @@ impl TransportClient {
     }
 
     /// Signal to the client that a transport to a broker has been opened.
-    ///
-    /// This will craft a `Connect` message and encode that into a complete message that
-    /// should be sent to the broker.
     ///
     /// # Arguments
     ///

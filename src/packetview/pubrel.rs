@@ -35,11 +35,12 @@ impl PubRel {
         Ok(puback)
     }
 
-    pub fn write(&self, buffer: &mut WriteCursor) -> Result<(), WriteError> {
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        let mut buffer = WriteCursor::new(buffer);
         let len = self.len();
         buffer.put_u8(0x62)?;
-        write_remaining_length(buffer, len)?;
+        write_remaining_length(&mut buffer, len)?;
         buffer.put_u16(self.pkid)?;
-        Ok(())
+        Ok(buffer.bytes_written())
     }
 }

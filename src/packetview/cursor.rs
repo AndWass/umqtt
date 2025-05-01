@@ -66,7 +66,6 @@ impl<'a> WriteCursor<'a> {
     pub fn written_slice(&self) -> &[u8] {
         &self.buffer[0..self.next_write_index]
     }
-
     pub fn finish(self) -> (&'a [u8], &'a [u8]) {
         let initalized = &self.buffer[0..self.next_write_index];
         let remaining = &self.buffer[self.next_write_index..];

@@ -90,16 +90,17 @@ impl<'a> Unsubscribe<'a> {
         Ok(unsubscribe)
     }
 
-    pub fn write(&self, payload: &mut WriteCursor) -> Result<(), WriteError> {
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        let mut buffer = WriteCursor::new(buffer);
         let remaining_len = self.len();
 
-        payload.put_u8(0xA2)?;
-        write_remaining_length(payload, remaining_len)?;
-        payload.put_u16(self.pkid)?;
+        buffer.put_u8(0xA2)?;
+        write_remaining_length(&mut buffer, remaining_len)?;
+        buffer.put_u16(self.pkid)?;
 
         for topic in self.topics.iter() {
-            write_mqtt_string(payload, topic)?;
+            write_mqtt_string(&mut buffer, topic)?;
         }
-        Ok(())
+        Ok(buffer.bytes_written())
     }
 }

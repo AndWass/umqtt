@@ -1,5 +1,5 @@
-use crate::packetview::{qos, read_mqtt_string, read_u16, Error, FixedHeader, QoS};
-use crate::packetview::cursor::Cursor;
+use crate::packetview::{qos, read_mqtt_string, read_u16, write_mqtt_string, write_remaining_length, Error, FixedHeader, QoS, WriteError};
+use crate::packetview::cursor::{Cursor, WriteCursor};
 
 /// Publish packet
 #[derive(Clone, PartialEq, Eq)]
@@ -14,14 +14,28 @@ pub struct Publish<'a> {
 
 impl core::fmt::Debug for Publish<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        #[derive(Debug)]
+        #[allow(dead_code)]
+        enum MaybeString<'a> {
+            String(&'a str),
+            Bytes(&'a [u8]),
+        }
+
+        let payload = if let Ok(s) = core::str::from_utf8(self.payload) {
+            MaybeString::String(s)
+        }
+        else {
+            MaybeString::Bytes(self.payload)
+        };
+
         write!(
             f,
-            "Topic = {}, Qos = {:?}, Retain = {}, Pkid = {:?}, Payload Size = {}",
+            "Topic = {}, Qos = {:?}, Retain = {}, Pkid = {:?}, Payload = {:?}",
             self.topic,
             self.qos,
             self.retain,
             self.pkid,
-            self.payload.len()
+            payload
         )
     }
 }
@@ -57,5 +71,40 @@ impl<'a> Publish<'a> {
         };
 
         Ok(publish)
+    }
+
+    fn len(&self) -> usize {
+        let len = 2 + self.topic.len() + self.payload.len();
+        if self.qos != QoS::AtMostOnce && self.pkid != 0 {
+            len + 2
+        } else {
+            len
+        }
+    }
+
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        let mut buffer = WriteCursor::new(buffer);
+        let len = self.len();
+
+        let dup = self.dup as u8;
+        let qos = self.qos as u8;
+        let retain = self.retain as u8;
+        buffer.put_u8(0b0011_0000 | retain | (qos << 1) | (dup << 3))?;
+
+        write_remaining_length(&mut buffer, len)?;
+        write_mqtt_string(&mut buffer, self.topic)?;
+
+        if self.qos != QoS::AtMostOnce {
+            let pkid = self.pkid;
+            if pkid == 0 {
+                return Err(WriteError::MalformedPacket);
+            }
+
+            buffer.put_u16(pkid)?;
+        }
+
+        buffer.put_slice(self.payload)?;
+
+        Ok(buffer.bytes_written())
     }
 }

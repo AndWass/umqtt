@@ -1,6 +1,8 @@
 use crate::packetview::connect::Connect;
-use crate::packetview::{Error, FixedHeader, PacketType};
+use crate::packetview::{Error, FixedHeader, PacketType, WriteError};
 use crate::packetview::connack::ConnAck;
+use crate::packetview::disconnect::Disconnect;
+use crate::packetview::ping::{PingReq, PingResp};
 use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
 use crate::packetview::publish::Publish;
@@ -73,6 +75,25 @@ impl<'a> Packet<'a> {
         let packet = &data[0..fixed_header.frame_length()];
         let parsed = Self::read_exact(fixed_header, packet)?;
         Ok((parsed, packet.len()))
+    }
+
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        match self {
+            Packet::Connect(p) => p.write(buffer),
+            Packet::ConnAck(p) => p.write(buffer),
+            Packet::Publish(p) => p.write(buffer),
+            Packet::PubAck(p) => p.write(buffer),
+            Packet::PubRec(p) => p.write(buffer),
+            Packet::PubRel(p) => p.write(buffer),
+            Packet::PubComp(p) => p.write(buffer),
+            Packet::Subscribe(p) => p.write(buffer),
+            Packet::SubAck(p) => p.write(buffer),
+            Packet::Unsubscribe(p) => p.write(buffer),
+            Packet::UnsubAck(p) => p.write(buffer),
+            Packet::PingReq => PingReq.write(buffer),
+            Packet::PingResp => PingResp.write(buffer),
+            Packet::Disconnect => Disconnect.write(buffer),
+        }
     }
 
     pub fn packet_type(&self) -> PacketType {

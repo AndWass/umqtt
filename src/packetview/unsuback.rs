@@ -26,9 +26,10 @@ impl UnsubAck {
         Ok(unsuback)
     }
 
-    pub fn write(&self, payload: &mut WriteCursor) -> Result<(), WriteError> {
-        payload.put_slice(&[0xB0, 0x02])?;
-        payload.put_u16(self.pkid)?;
-        Ok(())
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        let mut buffer = WriteCursor::new(buffer);
+        buffer.put_slice(&[0xB0, 0x02])?;
+        buffer.put_u16(self.pkid)?;
+        Ok(buffer.bytes_written())
     }
 }

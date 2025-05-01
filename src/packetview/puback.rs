@@ -31,6 +31,14 @@ impl PubAck {
 
         Ok(puback)
     }
+
+    pub fn write(&self, buffer: &mut [u8]) -> Result<usize, WriteError> {
+        let mut buffer = WriteCursor::new(buffer);
+        buffer.put_u8(0x40)?;
+        write_remaining_length(&mut buffer, 2)?;
+        buffer.put_u16(self.pkid)?;
+        Ok(buffer.bytes_written())
+    }
 }
 
 #[cfg(test)]
