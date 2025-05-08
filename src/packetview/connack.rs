@@ -13,6 +13,12 @@ pub enum ConnectReturnCode {
     NotAuthorized,
 }
 
+impl ConnectReturnCode {
+    pub fn is_success(&self) -> bool {
+        matches!(self, ConnectReturnCode::Success)
+    }
+}
+
 /// Connection return code type
 fn connect_return(num: u8) -> Result<ConnectReturnCode, Error> {
     match num {
@@ -79,7 +85,6 @@ impl ConnAck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packetview::cursor::WriteCursor;
     use crate::packetview::parse_fixed_header;
 
     #[test]

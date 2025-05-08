@@ -259,7 +259,6 @@ impl<'a> Connect<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::packetview::cursor::WriteCursor;
     use crate::packetview::parse_fixed_header;
 
     #[test]

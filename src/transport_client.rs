@@ -117,6 +117,7 @@ impl TransportClient {
     /// use umqtt::packetview::connect::ConnectOptions;
     /// let mut client = TransportClient::new(256);
     /// client.on_transport_opened(&ConnectOptions::default());
+    /// client.on_bytes_received(&[0x20, 2, 0, 0]); // Connack
     /// let mut data = vec![0xD0, 0, 0xD0, 0];
     /// let (pingresp, taken) = client.on_bytes_received(data.as_slice()).unwrap().unwrap();
     /// assert_eq!(taken, 2);

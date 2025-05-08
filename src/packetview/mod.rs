@@ -14,8 +14,8 @@ pub mod subscribe;
 pub mod suback;
 pub mod unsubscribe;
 pub mod unsuback;
-mod ping;
-mod disconnect;
+pub mod ping;
+pub mod disconnect;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub enum Error {

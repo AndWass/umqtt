@@ -1,48 +1,66 @@
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use umqtt::nano_client::{NanoClient, ClientNotification};
 use umqtt::packetview::connect::ConnectOptions;
-use umqtt::packetview::puback::PubAck;
 use umqtt::packetview::QoS;
-use umqtt::packetview::subscribe::{Subscribe, SubscribeFilter};
-use umqtt::transport_client::{Notification, TransportClient};
+use umqtt::packetview::subscribe::{SubscribeFilter};
+use umqtt::time::Instant;
 
-pub struct RxBuffer<const N: usize> {
-    buffer: [u8; N],
-    pos: usize,
+struct Platform {
+    stream: Option<TcpStream>,
+    epoch: tokio::time::Instant,
 }
 
-impl<const N: usize> RxBuffer<N> {
-    pub fn new() -> Self {
-        Self {
-            buffer: [0u8; N],
-            pos: 0,
+impl umqtt::nano_client::Platform for Platform {
+    type Error = std::io::Error;
+
+    async fn connect_transport(&mut self) -> Result<(), Self::Error> {
+        self.stream = Some(TcpStream::connect(("test.mosquitto.org", 1883)).await?);
+        Ok(())
+    }
+
+    async fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
+        self.stream.as_mut().unwrap().write_all(buf).await
+    }
+
+    async fn read_some(&mut self, buf: &mut [u8], timeout: Option<Duration>) -> Result<Option<usize>, Self::Error> {
+        println!("Reading with timeout {:?}", timeout);
+        if let Some(timeout) = timeout {
+            match tokio::time::timeout(timeout, self.stream.as_mut().unwrap().read(buf)).await {
+                Ok(x) => Ok(Some(x?)),
+                Err(_) => Ok(None),
+            }
+        }
+        else {
+            self.stream.as_mut().unwrap().read(buf).await.map(Some)
         }
     }
 
-    pub fn written_slice(&self) -> &[u8] {
-        &self.buffer[..self.pos]
-    }
-
-    pub fn writable_slice(&mut self) -> &mut [u8] {
-        &mut self.buffer[self.pos..]
-    }
-
-    pub fn advance(&mut self, amount: usize) {
-        self.pos += amount;
-    }
-
-    pub fn remove(&mut self, amount: usize) {
-        if amount >= self.pos {
-            self.pos = 0;
-            return;
-        }
-        self.buffer.copy_within(amount..self.pos, 0);
-        self.pos -= amount;
+    fn now(&mut self) -> Instant {
+        Instant::from_duration_since_epoch(tokio::time::Instant::now() - self.epoch)
     }
 }
 
-pub fn now(start_time: tokio::time::Instant) -> umqtt::time::Instant {
-    umqtt::time::Instant::from_seconds_since_epoch((tokio::time::Instant::now() - start_time).as_secs())
+async fn run_client<P: umqtt::nano_client::Platform>(client: &mut NanoClient<'_, P>) -> Result<(), umqtt::nano_client::Error<P>> {
+    let start_time = tokio::time::Instant::now();
+    loop {
+        let tick_result = client.next_notification().await?;
+        match &tick_result {
+            ClientNotification::TransportNotification(notif) => {
+                if let umqtt::transport_client::Notification::Publish(publish) = &notif.notification {
+                    println!("Publish received on topic '{}': {:?}", publish.topic, publish.payload);
+                }
+            }
+            ClientNotification::SendPing => {
+                println!("Sending ping");
+            }
+        }
+        println!("Uptime: {:?}", (tokio::time::Instant::now() - start_time));
+        // This needs to be stored in a seperate variable, otherwise the borrow-checker will complain!
+        let tick_result = tick_result.complete();
+        client.complete_notification(tick_result).await?;
+    }
 }
 
 #[tokio::main]
@@ -54,55 +72,25 @@ async fn main() {
         ..Default::default()
     };
 
-    let mut transport_client = TransportClient::new(256*1024);
     let mut tx_buffer = Box::new([0u8; 1024]);
-
-    let start_time = tokio::time::Instant::now();
-    let mut connection = TcpStream::connect(("test.mosquitto.org", 1883)).await.unwrap();
-    transport_client.on_transport_opened(&options);
-    let written = options.as_connect().write(tx_buffer.as_mut_slice()).unwrap();
-    connection.write_all(&tx_buffer.as_slice()[..written]).await.unwrap();
-    transport_client.on_packet_sent(now(start_time));
-
-    let mut rx_buffer = RxBuffer::<1024>::new();
+    let mut rx_buffer = Box::new([0u8; 1024]);
+    let platform = Platform {
+        stream: None,
+        epoch: tokio::time::Instant::now(),
+    };
+    let subscriptions = [SubscribeFilter::new("/andwass/#", QoS::AtLeastOnce)];
+    let mut client = NanoClient::new(platform, tx_buffer.as_mut_slice(), rx_buffer.as_mut_slice(), &subscriptions);
     loop {
-        if let Ok(Some(n)) = transport_client.on_bytes_received(rx_buffer.written_slice()) {
-            println!("{:?}", n.0);
-            match n.0 {
-                Notification::ConnAck(_) => {
-                    let filters = [SubscribeFilter::new("/andwass/#", QoS::AtLeastOnce)];
-                    let written = Subscribe::new(1, &filters).write(&mut tx_buffer.as_mut_slice()).unwrap();
-                    connection.write_all(&tx_buffer.as_slice()[..written]).await.unwrap();
-                    transport_client.on_packet_sent(now(start_time));
-                    println!("Connected!")
-                },
-                Notification::Publish(p) => {
-                    if p.qos != QoS::AtMostOnce {
-                        println!("Writing PUBACK with packet id {}", p.pkid);
-                        let written = PubAck::new(p.pkid).write(&mut tx_buffer.as_mut_slice()).unwrap();
-                        connection.write_all(&tx_buffer.as_slice()[..written]).await.unwrap();
-                        transport_client.on_packet_sent(now(start_time));
-                    }
-                },
-                Notification::Disconnected => return,
-                _ => {}
+        let connack = client.connect(&options).await;
+        if let Ok(connack) = connack {
+            if connack.code.is_success() {
+                println!("Connected");
+                println!("{:?}", run_client(&mut client).await);
             }
-            rx_buffer.remove(n.1);
-        }
-        else {
-            let timeout_in = transport_client.next_ping_in(now(start_time)).unwrap();
-            let res = tokio::time::timeout(timeout_in, connection.read(rx_buffer.writable_slice())).await;
-            match res {
-                Err(_) => {
-                    println!("Writing ping");
-                    connection.write_all(&[0xC0, 0]).await.unwrap();
-                    transport_client.on_packet_sent(now(start_time));
-                },
-                Ok(Err(_)) => {
-                    println!("Disconnected")
-                },
-                Ok(Ok(n)) => rx_buffer.advance(n),
+            else {
+                println!("Failed to connect, server returned {:?}", connack);
             }
         }
+        tokio::time::sleep(Duration::from_secs(20)).await;
     }
 }
