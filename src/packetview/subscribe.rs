@@ -39,6 +39,13 @@ impl<'a> Storage<'a> {
             Storage::WireBytes(bytes) => StorageIter::Bytes(BytesIterator(bytes.iter())),
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Storage::Slice(x) => x.is_empty(),
+            Storage::WireBytes(_) => self.iter().count() == 0,
+        }
+    }
 }
 
 impl core::fmt::Debug for Storage<'_> {

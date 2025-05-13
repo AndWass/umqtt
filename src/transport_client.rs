@@ -192,4 +192,8 @@ impl TransportClient {
             None
         }
     }
+
+    pub fn is_disconnected(&self) -> bool {
+        matches!(self.state, State::Disconnected)
+    }
 }

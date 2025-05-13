@@ -17,18 +17,18 @@
 //! use std::time::Duration;
 //! use tokio::io::{AsyncReadExt, AsyncWriteExt};
 //! use tokio::net::TcpStream;
-//! use umqtt::nano_client::{NanoClient, ClientNotification};
+//! use umqtt::nano_client::{NanoClient, ClientNotification, Error, Platform};
 //! use umqtt::packetview::connect::ConnectOptions;
 //! use umqtt::packetview::QoS;
 //! use umqtt::packetview::subscribe::{SubscribeFilter};
 //! use umqtt::time::Instant;
 //!
-//! struct Platform {
+//! struct TokioPlatform {
 //!     stream: Option<TcpStream>,
 //!     epoch: tokio::time::Instant,
 //! }
 //!
-//! impl umqtt::nano_client::Platform for Platform {
+//! impl Platform for TokioPlatform {
 //!     type Error = std::io::Error;
 //!
 //!     async fn connect_transport(&mut self) -> Result<(), Self::Error> {
@@ -57,12 +57,13 @@
 //!     }
 //! }
 //!
-//! async fn run_client<P: umqtt::nano_client::Platform>(client: &mut NanoClient<'_, P>) -> Result<(), umqtt::nano_client::Error<P>> {
+//! async fn run_client<P: Platform>(client: &mut NanoClient<'_, P>) -> Result<(), Error<P>> {
 //!     let start_time = tokio::time::Instant::now();
 //!     loop {
 //!         let tick_result = client.next_notification().await?;
 //!         // handle notification
-//!         // This needs to be stored in a seperate variable, otherwise the borrow-checker will complain!
+//!         // This needs to be stored in a seperate variable,
+//!         // otherwise the borrow-checker will complain!
 //!         let tick_result = tick_result.complete();
 //!         client.complete_notification(tick_result).await?;
 //!     }
@@ -79,7 +80,7 @@
 //!
 //!     let mut tx_buffer = Box::new([0u8; 1024]);
 //!     let mut rx_buffer = Box::new([0u8; 1024]);
-//!     let platform = Platform {
+//!     let platform = TokioPlatform {
 //!         stream: None,
 //!         epoch: tokio::time::Instant::now(),
 //!     };
@@ -93,17 +94,18 @@
 //! }
 //! ```
 
-use core::fmt::{Debug, Formatter};
-use crate::packetview::connack::ConnAck;
+use crate::packetview::QoS;
+use crate::packetview::connack::{ConnAck, ConnectReturnCode};
 use crate::packetview::connect::ConnectOptions;
 use crate::packetview::ping::PingReq;
 use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
+use crate::packetview::publish::Publish;
 use crate::packetview::pubrec::PubRec;
-use crate::packetview::QoS;
 use crate::packetview::subscribe::{Subscribe, SubscribeFilter};
 use crate::time::Instant;
 use crate::transport_client::{Notification, TransportClient};
+use core::fmt::{Debug, Formatter};
 
 #[derive(Debug)]
 pub struct TransportNotification<'a> {
@@ -114,8 +116,7 @@ pub struct TransportNotification<'a> {
 }
 
 /// The action to take when completing a notification
-pub enum NotificationAction
-{
+pub enum NotificationAction {
     None,
     PingReq,
     PubAck(u16),
@@ -134,7 +135,7 @@ impl NotificationCompletion {
     pub fn with_action(tick_result: ClientNotification, action: NotificationAction) -> Self {
         Self {
             taken: tick_result.taken(),
-            action
+            action,
         }
     }
 }
@@ -177,21 +178,16 @@ impl ClientNotification<'_> {
             Self::TransportNotification(x) => {
                 let taken = x.taken;
                 let action = match x.notification {
-                    Notification::Publish(publish) => {
-                        match publish.qos {
-                            QoS::AtMostOnce => NotificationAction::None,
-                            QoS::AtLeastOnce => NotificationAction::PubAck(publish.pkid),
-                            QoS::ExactlyOnce => NotificationAction::PubRec(publish.pkid),
-                        }
+                    Notification::Publish(publish) => match publish.qos {
+                        QoS::AtMostOnce => NotificationAction::None,
+                        QoS::AtLeastOnce => NotificationAction::PubAck(publish.pkid),
+                        QoS::ExactlyOnce => NotificationAction::PubRec(publish.pkid),
                     },
                     Notification::PubRel(pubrel) => NotificationAction::PubComp(pubrel.pkid),
-                    _ => NotificationAction::None
+                    _ => NotificationAction::None,
                 };
 
-                NotificationCompletion {
-                    taken,
-                    action
-                }
+                NotificationCompletion { taken, action }
             }
         }
     }
@@ -266,13 +262,18 @@ pub trait Platform {
     ///   * `Ok(Some(n))` - `n` bytes were transferred to `buf`.
     ///   * `Err(_)` - An error has ocurred. The client will treat this as transport has closed.
     ///
-    async fn read_some(&mut self, buf: &mut [u8], timeout: Option<core::time::Duration>) -> Result<Option<usize>, Self::Error>;
+    async fn read_some(
+        &mut self,
+        buf: &mut [u8],
+        timeout: Option<core::time::Duration>,
+    ) -> Result<Option<usize>, Self::Error>;
     /// Get the current time
     ///
     /// Gets the current time since some unspecified epoch.
     fn now(&mut self) -> Instant;
 }
 
+/// The error type used by [`NanoClient`]
 pub enum Error<P: Platform> {
     ConnectionClosed,
     UnexpectedPacket,
@@ -292,7 +293,7 @@ where
             Error::UnexpectedPacket => write!(f, "UnexpectedPacket"),
             Error::IO(x) => write!(f, "IO({:?})", x),
             Error::ReadError(x) => write!(f, "ReadError({:?})", x),
-            Error::WriteError(x) => write!(f, "WriteError({:?})", x)
+            Error::WriteError(x) => write!(f, "WriteError({:?})", x),
         }
     }
 }
@@ -329,6 +330,16 @@ impl<'a> Buffer<'a> {
     }
 }
 
+/// A nano MQTT client
+///
+/// This client is very small and opinionated client:
+///
+///   * Only subscribes to a pre-defined set of subscriptions.
+///   * Cannot change subscriptions after creation.
+///   * No session state handling - this is handled by the user.
+///   * Doesn't keep track of in-flight packet ids - this is handled by the user.
+///   * Doesn't keep track of unacked publishes - this is handled by the user.
+///
 pub struct NanoClient<'a, P> {
     platform: P,
     subscriptions: Subscribe<'a>,
@@ -346,17 +357,30 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     }
 
     async fn write_all(&mut self, size: usize) -> Result<(), Error<P>> {
+        if self.transport_client.is_disconnected() {
+            return Err(Error::ConnectionClosed);
+        }
         match self.platform.write_all(&self.tx_buffer[..size]).await {
             Ok(()) => {
                 self.transport_client.on_packet_sent(self.platform.now());
                 Ok(())
-            },
-            Err(e) => Err(Error::IO(e)),
+            }
+            Err(e) => {
+                self.transport_client.on_transport_closed();
+                Err(Error::IO(e))
+            }
         }
     }
 
-    async fn read_some_with_timeout(&mut self, timeout: Option<core::time::Duration>) -> Result<Option<usize>, Error<P>> {
-        match self.platform.read_some(self.rx_buffer.unused_slice_mut(), timeout).await {
+    async fn read_some_with_timeout(
+        &mut self,
+        timeout: Option<core::time::Duration>,
+    ) -> Result<Option<usize>, Error<P>> {
+        match self
+            .platform
+            .read_some(self.rx_buffer.unused_slice_mut(), timeout)
+            .await
+        {
             Ok(None) => Ok(None),
             Ok(Some(n)) => {
                 if n == 0 {
@@ -365,42 +389,56 @@ impl<'a, P: Platform> NanoClient<'a, P> {
                 }
                 self.rx_buffer.used += n;
                 Ok(Some(n))
-            },
+            }
             Err(e) => {
                 self.transport_client.on_transport_closed();
                 Err(Error::IO(e))
-            },
+            }
         }
     }
 
-    pub async fn read_some(&mut self) -> Result<Option<usize>, Error<P>> {
-        let timeout = self.transport_client.next_ping_in(self.platform.now());
-        self.read_some_with_timeout(timeout).await
-    }
-
-    pub async fn read_connack(&mut self) -> Result<ConnAck, Error<P>> {
+    async fn read_connack(&mut self) -> Result<ConnAck, Error<P>> {
         loop {
             let read_result = self.read_some_with_timeout(None).await?.unwrap();
             if read_result == 0 {
                 return Err(Error::ConnectionClosed);
             }
-            match self.transport_client.on_bytes_received(self.rx_buffer.used_slice()) {
+            match self
+                .transport_client
+                .on_bytes_received(self.rx_buffer.used_slice())
+            {
                 Err(e) => return Err(Error::ReadError(e)),
-                Ok(None) => {},
-                Ok(Some((notif, taken))) => {
-                    match notif {
-                        Notification::ConnAck(ack) => {
-                            self.rx_buffer.remove_prefix(taken);
-                            return Ok(ack);
-                        },
-                        _ => return Err(Error::UnexpectedPacket),
+                Ok(None) => {}
+                Ok(Some((notif, taken))) => match notif {
+                    Notification::ConnAck(ack) => {
+                        self.rx_buffer.remove_prefix(taken);
+                        return Ok(ack);
                     }
-                }
+                    _ => return Err(Error::UnexpectedPacket),
+                },
             }
         }
     }
 
-    pub fn new(platform: P, tx_buffer: &'a mut[u8], rx_buffer: &'a mut [u8], subscriptions: &'a[SubscribeFilter<'a>]) -> Self {
+    /// Create a new [`NanoClient`]
+    ///
+    /// # Arguments
+    ///
+    ///   * `platform` - Platform-specific functionality needed by the client.
+    ///   * `tx_buffer` - Buffer to use when sending data.
+    ///   * `rx_buffer` - Buffer to use when receiving data.
+    ///   * `subscriptions` - The subscriptions to subscribe to after the client has connected.
+    ///
+    /// # Returns
+    ///
+    /// A new [`NanoClient`]
+    ///
+    pub fn new(
+        platform: P,
+        tx_buffer: &'a mut [u8],
+        rx_buffer: &'a mut [u8],
+        subscriptions: &'a [SubscribeFilter<'a>],
+    ) -> Self {
         Self {
             subscriptions: Subscribe::new(1, subscriptions),
             transport_client: TransportClient::new(rx_buffer.len()),
@@ -410,46 +448,96 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         }
     }
 
-    pub async fn connect(&mut self, connect_options: &ConnectOptions<'_>) -> Result<ConnAck, Error<P>> {
+    /// Connect to the MQTT broker.
+    ///
+    /// The [`Platform`] is expected to know which broker to connect to.
+    ///
+    /// # Arguments
+    ///
+    ///   * `connect_options` - The options to use when connecting and authenticating with the broker.
+    ///
+    /// # Returns
+    ///
+    /// A result containing either the [`ConnAck`] response from the server, or an error if
+    /// some error ocurred.
+    ///
+    /// **Note:** The [`ConnAck`] might report an error from the server. In that case the client
+    /// assumes that the transport has closed as well.
+    pub async fn connect(
+        &mut self,
+        connect_options: &ConnectOptions<'_>,
+    ) -> Result<ConnAck, Error<P>> {
         self.connect_transport().await?;
         self.transport_client.on_transport_opened(connect_options);
         self.rx_buffer.reset();
-        let out_size = connect_options.as_connect().write(self.tx_buffer).map_err(|e| Error::WriteError(e))?;
+        let out_size = connect_options
+            .as_connect()
+            .write(self.tx_buffer)
+            .map_err(|e| Error::WriteError(e))?;
         self.write_all(out_size).await?;
         let connack = self.read_connack().await?;
-        let out_size = self.subscriptions.write(self.tx_buffer).map_err(|e| Error::WriteError(e))?;
-        self.write_all(out_size).await?;
+        if connack.code != ConnectReturnCode::Success {
+            self.transport_client.on_transport_closed();
+            return Ok(connack);
+        }
+        if !self.subscriptions.filters.is_empty() {
+            let out_size = self
+                .subscriptions
+                .write(self.tx_buffer)
+                .map_err(|e| Error::WriteError(e))?;
+            self.write_all(out_size).await?;
+        }
         Ok(connack)
     }
 
+    /// Read data until next notification
+    ///
+    /// Reads data from the transport until either of the following is true:
+    ///
+    ///   * A new packet is received - the packet is returned to the sender.
+    ///   * A ping should be sent
+    ///   * An error ocurrs.
+    ///
     pub async fn next_notification<'b>(&'b mut self) -> Result<ClientNotification<'b>, Error<P>>
     where
-        'a: 'b
+        'a: 'b,
     {
+        if self.is_disconnected() {
+            return Err(Error::ConnectionClosed);
+        }
         loop {
             let now = self.platform.now();
             let next_ping = self.transport_client.next_ping_in(now);
             let Some(_read_result) = self.read_some_with_timeout(next_ping).await? else {
                 return Ok(ClientNotification::SendPing);
             };
-            if crate::packetview::check(self.rx_buffer.used_slice(), self.rx_buffer.buffer.len()).is_ok() {
+            if crate::packetview::check(self.rx_buffer.used_slice(), self.rx_buffer.buffer.len())
+                .is_ok()
+            {
                 break;
             }
         }
 
-        match self.transport_client.on_bytes_received(self.rx_buffer.used_slice()) {
+        match self
+            .transport_client
+            .on_bytes_received(self.rx_buffer.used_slice())
+        {
             Err(e) => Err(Error::ReadError(e)),
             Ok(None) => Err(Error::ReadError(crate::packetview::Error::MalformedPacket)),
-            Ok(Some((notif, taken))) => {
-                Ok(ClientNotification::TransportNotification(TransportNotification {
+            Ok(Some((notif, taken))) => Ok(ClientNotification::TransportNotification(
+                TransportNotification {
                     notification: notif,
                     taken,
-                }))
-            }
+                },
+            )),
         }
     }
 
-    pub async fn complete_notification(&mut self, completion: NotificationCompletion) -> Result<(), Error<P>> {
+    /// User calls this when a notification is done and should be completed.
+    pub async fn complete_notification(
+        &mut self,
+        completion: NotificationCompletion,
+    ) -> Result<(), Error<P>> {
         if completion.taken > 0 {
             self.rx_buffer.remove_prefix(completion.taken);
         }
@@ -463,37 +551,86 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     }
 
     pub async fn send_ping_request(&mut self) -> Result<(), Error<P>> {
-        let out_size = PingReq.write(self.tx_buffer).map_err(|e| Error::WriteError(e))?;
+        let out_size = PingReq
+            .write(self.tx_buffer)
+            .map_err(|e| Error::WriteError(e))?;
         self.write_all(out_size).await?;
         Ok(())
     }
 
     pub async fn send_pub_ack(&mut self, packet_id: u16) -> Result<(), Error<P>> {
-        let out_size = PubAck::new(packet_id).write(self.tx_buffer).map_err(|e| Error::WriteError(e))?;
+        let out_size = PubAck::new(packet_id)
+            .write(self.tx_buffer)
+            .map_err(|e| Error::WriteError(e))?;
         self.write_all(out_size).await
     }
 
     pub async fn send_pub_rec(&mut self, packet_id: u16) -> Result<(), Error<P>> {
-        let out_size = PubRec::new(packet_id).write(self.tx_buffer).map_err(|e| Error::WriteError(e))?;
+        let out_size = PubRec::new(packet_id)
+            .write(self.tx_buffer)
+            .map_err(|e| Error::WriteError(e))?;
         self.write_all(out_size).await
     }
 
     pub async fn send_pub_comp(&mut self, packet_id: u16) -> Result<(), Error<P>> {
-        let out_size = PubComp::new(packet_id).write(self.tx_buffer).map_err(|e| Error::WriteError(e))?;
+        let out_size = PubComp::new(packet_id)
+            .write(self.tx_buffer)
+            .map_err(|e| Error::WriteError(e))?;
         self.write_all(out_size).await
+    }
+
+    pub async fn send_publish(&mut self, publish: Publish<'_>) -> Result<(), Error<P>> {
+        let out_size = publish
+            .write(self.tx_buffer)
+            .map_err(|e| Error::WriteError(e))?;
+        self.write_all(out_size).await
+    }
+
+    pub async fn send_publish_qos0(&mut self, topic: &str, data: &[u8]) -> Result<(), Error<P>> {
+        self.send_publish(Publish {
+            pkid: 0,
+            payload: data,
+            topic,
+            dup: false,
+            retain: false,
+            qos: QoS::AtMostOnce,
+        })
+        .await
+    }
+
+    pub async fn send_publish_qos1(
+        &mut self,
+        packet_id: u16,
+        topic: &str,
+        data: &[u8],
+    ) -> Result<(), Error<P>> {
+        self.send_publish(Publish {
+            pkid: packet_id,
+            payload: data,
+            topic,
+            dup: false,
+            retain: false,
+            qos: QoS::AtLeastOnce,
+        })
+        .await
+    }
+
+    pub fn is_disconnected(&self) -> bool {
+        self.transport_client.is_disconnected()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::nano_client::{NanoClient, Platform};
+    use crate::time::Instant;
     use alloc::boxed::Box;
     use alloc::collections::VecDeque;
     use alloc::rc::Rc;
     use alloc::vec::Vec;
     use core::cell::RefCell;
     use core::time::Duration;
-    use crate::nano_client::{NanoClient, Platform};
-    use crate::time::Instant;
+    use crate::packetview::connect::ConnectOptions;
 
     #[derive(Default)]
     struct TestPlatformData {
@@ -508,7 +645,7 @@ mod tests {
     impl TestPlatform {
         fn new() -> Self {
             Self {
-                data: Rc::new(RefCell::new(TestPlatformData::default()))
+                data: Rc::new(RefCell::new(TestPlatformData::default())),
             }
         }
     }
@@ -525,7 +662,11 @@ mod tests {
             Ok(())
         }
 
-        async fn read_some(&mut self, buf: &mut [u8], _timeout: Option<Duration>) -> Result<Option<usize>, Self::Error> {
+        async fn read_some(
+            &mut self,
+            buf: &mut [u8],
+            _timeout: Option<Duration>,
+        ) -> Result<Option<usize>, Self::Error> {
             let Some(next_packet) = self.data.borrow_mut().packets_to_read.pop_front() else {
                 return Ok(None);
             };
@@ -540,13 +681,45 @@ mod tests {
     }
 
     #[test]
-    fn tick_one() {
-        let mut rx_buffer = [0; 256];
-        let mut tx_buffer = [0; 256];
+    fn disconnected_on_creation() {
         let platform = TestPlatform::new();
+        let mut tx_buffer = [0u8; 256];
+        let mut rx_buffer = [0u8; 256];
         let mut client = NanoClient::new(platform, &mut tx_buffer, &mut rx_buffer, &[]);
-        let notif = spin_on::spin_on(client.next_notification()).unwrap();
-        let completion = notif.complete();
-        spin_on::spin_on(client.complete_notification(completion)).unwrap();
+        assert!(client.is_disconnected());
+
+        let res = spin_on::spin_on(client.next_notification());
+        assert!(res.is_err());
+        let res = spin_on::spin_on(client.send_publish_qos0("/test", b"hello"));
+        assert!(res.is_err());
+        let res = spin_on::spin_on(client.send_ping_request());
+        assert!(res.is_err());
+        let res = spin_on::spin_on(client.send_pub_comp(2));
+        assert!(res.is_err());
+        let res = spin_on::spin_on(client.send_pub_ack(2));
+        assert!(res.is_err());
+        let res = spin_on::spin_on(client.send_pub_rec(2));
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn no_subscribe_on_empty_topic_filter_list() {
+        let platform = TestPlatform::new();
+        let data = platform.data.clone();
+        data.borrow_mut().packets_to_read.push_back(Box::new([0x20, 2, 0, 0])); // CONNACK.
+        let mut tx_buffer = [0u8; 256];
+        let mut rx_buffer = [0u8; 256];
+        let mut client = NanoClient::new(platform, &mut tx_buffer, &mut rx_buffer, &[]);
+
+        let connect_options = ConnectOptions {
+            keep_alive: 10,
+            clean_session: true,
+            client_id: "test",
+            last_will: None,
+            login: None,
+        };
+
+        let res = spin_on::spin_on(client.connect(&connect_options));
+        assert_eq!(data.borrow().packets_written.len(), 1);
     }
 }
