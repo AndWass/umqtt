@@ -16,6 +16,7 @@ pub mod unsubscribe;
 pub mod unsuback;
 pub mod ping;
 pub mod disconnect;
+pub mod topic_iterator;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub enum Error {

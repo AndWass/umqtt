@@ -85,9 +85,9 @@
 //!         epoch: tokio::time::Instant::now(),
 //!     };
 //!     let subscriptions = [SubscribeFilter::new("/umqtt/#", QoS::AtLeastOnce)];
-//!     let mut client = NanoClient::new(platform, tx_buffer.as_mut_slice(), rx_buffer.as_mut_slice(), &subscriptions);
+//!     let mut client = NanoClient::new(platform, tx_buffer.as_mut_slice(), rx_buffer.as_mut_slice());
 //!     loop {
-//!         let _connack = client.connect(&options).await;
+//!         let _connack = client.connect(&options, &subscriptions).await;
 //!         run_client(&mut client).await;
 //!         tokio::time::sleep(Duration::from_secs(20)).await;
 //!     }
@@ -100,7 +100,8 @@ use crate::packetview::connect::ConnectOptions;
 use crate::packetview::ping::PingReq;
 use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
-use crate::packetview::publish::Publish;
+use crate::packetview::publish::{PublishTopicIter};
+use crate::packetview::topic_iterator::TopicIterator;
 use crate::packetview::pubrec::PubRec;
 use crate::packetview::subscribe::{Subscribe, SubscribeFilter};
 use crate::time::Instant;
@@ -342,7 +343,6 @@ impl<'a> Buffer<'a> {
 ///
 pub struct NanoClient<'a, P> {
     platform: P,
-    subscriptions: Subscribe<'a>,
     transport_client: TransportClient,
     tx_buffer: &'a mut [u8],
     rx_buffer: Buffer<'a>,
@@ -427,7 +427,6 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     ///   * `platform` - Platform-specific functionality needed by the client.
     ///   * `tx_buffer` - Buffer to use when sending data.
     ///   * `rx_buffer` - Buffer to use when receiving data.
-    ///   * `subscriptions` - The subscriptions to subscribe to after the client has connected.
     ///
     /// # Returns
     ///
@@ -436,11 +435,9 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     pub fn new(
         platform: P,
         tx_buffer: &'a mut [u8],
-        rx_buffer: &'a mut [u8],
-        subscriptions: &'a [SubscribeFilter<'a>],
+        rx_buffer: &'a mut [u8]
     ) -> Self {
         Self {
-            subscriptions: Subscribe::new(1, subscriptions),
             transport_client: TransportClient::new(rx_buffer.len()),
             platform,
             tx_buffer,
@@ -455,6 +452,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     /// # Arguments
     ///
     ///   * `connect_options` - The options to use when connecting and authenticating with the broker.
+    ///   * `subscriptions` - The subscriptions to subscribe to after the client has connected.
     ///
     /// # Returns
     ///
@@ -463,9 +461,10 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     ///
     /// **Note:** The [`ConnAck`] might report an error from the server. In that case the client
     /// assumes that the transport has closed as well.
-    pub async fn connect(
+    pub async fn connect<'b>(
         &mut self,
         connect_options: &ConnectOptions<'_>,
+        subscriptions: &'b [SubscribeFilter<'b>]
     ) -> Result<ConnAck, Error<P>> {
         self.connect_transport().await?;
         self.transport_client.on_transport_opened(connect_options);
@@ -480,9 +479,9 @@ impl<'a, P: Platform> NanoClient<'a, P> {
             self.transport_client.on_transport_closed();
             return Ok(connack);
         }
-        if !self.subscriptions.filters.is_empty() {
-            let out_size = self
-                .subscriptions
+        if !subscriptions.is_empty() {
+            let subscribe = Subscribe::new(1, subscriptions);
+            let out_size = subscribe
                 .write(self.tx_buffer)
                 .map_err(|e| Error::WriteError(e))?;
             self.write_all(out_size).await?;
@@ -579,35 +578,41 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         self.write_all(out_size).await
     }
 
-    pub async fn send_publish(&mut self, publish: Publish<'_>) -> Result<(), Error<P>> {
-        let out_size = publish
+    pub async fn send_publish<'t, I, T>(&mut self, publish: T) -> Result<(), Error<P>>
+    where
+        I: Iterator<Item=&'t str> + Sized + Clone,
+        T: Into<PublishTopicIter<'t, I>>,
+    {
+        let out_size = publish.into()
             .write(self.tx_buffer)
             .map_err(|e| Error::WriteError(e))?;
         self.write_all(out_size).await
     }
 
-    pub async fn send_publish_qos0(&mut self, topic: &str, data: &[u8]) -> Result<(), Error<P>> {
-        self.send_publish(Publish {
-            pkid: 0,
+    pub async fn send_publish_qos0<'t, I, T>(&mut self, topic: T, data: &'t [u8]) -> Result<(), Error<P>>
+    where
+        T: Into<TopicIterator<'t, I>>,
+        I: Iterator<Item=&'t str> + Clone,
+    {
+        self.send_publish(PublishTopicIter {
             payload: data,
-            topic,
-            dup: false,
-            retain: false,
+            pkid: 0,
             qos: QoS::AtMostOnce,
-        })
-        .await
+            retain: false,
+            dup: false,
+            topic: topic.into()
+        }).await
     }
 
-    pub async fn send_publish_qos1(
-        &mut self,
-        packet_id: u16,
-        topic: &str,
-        data: &[u8],
-    ) -> Result<(), Error<P>> {
-        self.send_publish(Publish {
+    pub async fn send_publish_qos1<'t, I, T>(&mut self, packet_id: u16, topic: T, data: &'t [u8]) -> Result<(), Error<P>>
+    where
+        T: Into<TopicIterator<'t, I>>,
+        I: Iterator<Item=&'t str> + Clone,
+    {
+        self.send_publish(PublishTopicIter {
             pkid: packet_id,
             payload: data,
-            topic,
+            topic: topic.into(),
             dup: false,
             retain: false,
             qos: QoS::AtLeastOnce,
@@ -617,6 +622,10 @@ impl<'a, P: Platform> NanoClient<'a, P> {
 
     pub fn is_disconnected(&self) -> bool {
         self.transport_client.is_disconnected()
+    }
+
+    pub fn platform(&self) -> &P {
+        &self.platform
     }
 }
 
@@ -685,7 +694,7 @@ mod tests {
         let platform = TestPlatform::new();
         let mut tx_buffer = [0u8; 256];
         let mut rx_buffer = [0u8; 256];
-        let mut client = NanoClient::new(platform, &mut tx_buffer, &mut rx_buffer, &[]);
+        let mut client = NanoClient::new(platform, &mut tx_buffer, &mut rx_buffer);
         assert!(client.is_disconnected());
 
         let res = spin_on::spin_on(client.next_notification());
@@ -709,7 +718,7 @@ mod tests {
         data.borrow_mut().packets_to_read.push_back(Box::new([0x20, 2, 0, 0])); // CONNACK.
         let mut tx_buffer = [0u8; 256];
         let mut rx_buffer = [0u8; 256];
-        let mut client = NanoClient::new(platform, &mut tx_buffer, &mut rx_buffer, &[]);
+        let mut client = NanoClient::new(platform, &mut tx_buffer, &mut rx_buffer);
 
         let connect_options = ConnectOptions {
             keep_alive: 10,
@@ -719,7 +728,7 @@ mod tests {
             login: None,
         };
 
-        let res = spin_on::spin_on(client.connect(&connect_options));
+        let res = spin_on::spin_on(client.connect(&connect_options, &[]));
         assert_eq!(data.borrow().packets_written.len(), 1);
     }
 }

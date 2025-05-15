@@ -66,7 +66,7 @@ async fn run_client<P: umqtt::nano_client::Platform>(client: &mut NanoClient<'_,
 #[tokio::main]
 async fn main() {
     let options = ConnectOptions {
-        client_id: "umqtt-basic-client",
+        client_id: "umqttbasicclient",
         keep_alive: 10,
         clean_session: true,
         ..Default::default()
@@ -79,9 +79,9 @@ async fn main() {
         epoch: tokio::time::Instant::now(),
     };
     let subscriptions = [SubscribeFilter::new("/andwass/#", QoS::AtLeastOnce)];
-    let mut client = NanoClient::new(platform, tx_buffer.as_mut_slice(), rx_buffer.as_mut_slice(), &subscriptions);
+    let mut client = NanoClient::new(platform, tx_buffer.as_mut_slice(), rx_buffer.as_mut_slice());
     loop {
-        let connack = client.connect(&options).await;
+        let connack = client.connect(&options, &subscriptions).await;
         if let Ok(connack) = connack {
             if connack.code.is_success() {
                 println!("Connected");
@@ -90,6 +90,9 @@ async fn main() {
             else {
                 println!("Failed to connect, server returned {:?}", connack);
             }
+        }
+        else {
+            println!("Failed to connect...");
         }
         tokio::time::sleep(Duration::from_secs(20)).await;
     }
