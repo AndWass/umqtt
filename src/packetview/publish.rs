@@ -202,7 +202,7 @@ impl OutPublish {
         }
 
         let len_bytes = (topic_len as u16).to_be_bytes();
-        (&mut buffer[topic_len_start_index..topic_len_start_index+2]).copy_from_slice(&len_bytes);
+        buffer[topic_len_start_index..topic_len_start_index+2].copy_from_slice(&len_bytes);
 
         Ok(())
     }
@@ -253,7 +253,7 @@ impl OutPublish {
         let retain = self.retain as u8;
 
         header[packet_start_index] = 0b0011_0000 | retain | (qos << 1) | (dup << 3);
-        (&mut header[packet_start_index+1..]).copy_from_slice(remaining_len);
+        header[packet_start_index+1..].copy_from_slice(remaining_len);
 
         Ok(&output_buffer[packet_start_index..(1+packet_start_index+remaining_len.len()+remaining_len_value)])
     }
@@ -290,6 +290,6 @@ mod tests
 
         assert_eq!(output.len(), 1+2+2+5+128);
         assert_eq!(&output[0..10], b"\x30\x87\x01\x00\x05hello");
-        assert!((&output[10..]).iter().enumerate().all(|x| x.0 == (*x.1).into()));
+        assert!(output[10..].iter().enumerate().all(|x| x.0 == (*x.1).into()));
     }
 }

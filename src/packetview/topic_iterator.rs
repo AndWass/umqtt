@@ -7,7 +7,7 @@ impl<'a> Iterator for Deref<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|item| *item)
+        self.0.next().copied()
     }
 }
 
@@ -38,7 +38,7 @@ where
     }
 }
 
-impl<'a, I: Iterator + Sized> TopicIterator<'a, I> {
+impl<I: Iterator + Sized> TopicIterator<'_, I> {
     pub fn new(iter: I) -> Self {
         Self {
             iter: iter.peekable(),
@@ -74,22 +74,20 @@ impl<'a, I: Iterator<Item=&'a str> + Sized> Iterator for TopicIterator<'a, I> {
             self.first = false;
             self.iter.next()
         }
-        else {
-            if !self.prev_was_separator {
-                match self.iter.peek() {
-                    Some(_x) => {
-                        self.prev_was_separator = true;
-                        Some("/")
-                    },
-                    None => {
-                        None
-                    }
+        else if !self.prev_was_separator {
+            match self.iter.peek() {
+                Some(_x) => {
+                    self.prev_was_separator = true;
+                    Some("/")
+                },
+                None => {
+                    None
                 }
             }
-            else {
-                self.prev_was_separator = false;
-                self.iter.next()
-            }
+        }
+        else {
+            self.prev_was_separator = false;
+            self.iter.next()
         }
     }
 }

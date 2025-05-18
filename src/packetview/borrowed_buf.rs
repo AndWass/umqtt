@@ -43,7 +43,7 @@ impl<'a> BorrowedBuf<'a> {
     }
 }
 
-impl<'a> Index<usize> for BorrowedBuf<'a> {
+impl Index<usize> for BorrowedBuf<'_> {
     type Output = u8;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -51,13 +51,13 @@ impl<'a> Index<usize> for BorrowedBuf<'a> {
     }
 }
 
-impl<'a> IndexMut<usize> for BorrowedBuf<'a> {
+impl IndexMut<usize> for BorrowedBuf<'_> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.buffer[index]
     }
 }
 
-impl<'a> Index<Range<usize>> for BorrowedBuf<'a> {
+impl Index<Range<usize>> for BorrowedBuf<'_> {
     type Output = [u8];
 
     fn index(&self, index: Range<usize>) -> &Self::Output {
@@ -65,7 +65,7 @@ impl<'a> Index<Range<usize>> for BorrowedBuf<'a> {
     }
 }
 
-impl<'a> IndexMut<Range<usize>> for BorrowedBuf<'a> {
+impl IndexMut<Range<usize>> for BorrowedBuf<'_> {
     fn index_mut(&mut self, index: Range<usize>) -> &mut Self::Output {
         &mut self.buffer[index]
     }

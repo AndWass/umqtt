@@ -587,7 +587,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
         D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
     {
-        let written = publish.write(topic, payload, &mut self.tx_buffer)
+        let written = publish.write(topic, payload, self.tx_buffer)
             .map_err(|e| Error::WriteError(e))?;
         Self::write_buffer(&mut self.transport_client, &mut self.platform, written).await
     }
@@ -679,7 +679,7 @@ mod tests {
                 return Ok(None);
             };
 
-            (&mut buf[0..next_packet.len()]).copy_from_slice(next_packet.as_ref());
+            buf[0..next_packet.len()].copy_from_slice(next_packet.as_ref());
             Ok(Some(next_packet.len()))
         }
 
