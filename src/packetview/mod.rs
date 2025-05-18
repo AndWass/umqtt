@@ -45,6 +45,13 @@ pub enum WriteError {
     PayloadTooLong
 }
 
+impl From<core::fmt::Error> for WriteError
+{
+    fn from(_value: core::fmt::Error) -> Self {
+        Self::NotEnoughCapacity
+    }
+}
+
 /// Quality of service
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Default)]

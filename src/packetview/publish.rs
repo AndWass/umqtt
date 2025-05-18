@@ -187,7 +187,11 @@ impl<'a, 'b: 'a> core::fmt::Write for PayloadWriter<'a, 'b> {
 }
 
 impl OutPublish {
-    fn write_topic<T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>>(topic: T, buffer: &mut BorrowedBuf) -> Result<(), WriteError> {
+    fn write_topic<T, E>(topic: T, buffer: &mut BorrowedBuf) -> Result<(), WriteError>
+    where
+        T: FnOnce(&mut TopicWriter) -> Result<(), E>,
+        WriteError: From<E>,
+    {
         let topic_len_start_index = buffer.len();
         buffer.add_slice(&[0, 0])?;
         let len_before_topic_string = buffer.len();
@@ -202,10 +206,12 @@ impl OutPublish {
 
         Ok(())
     }
-    fn write_var_header_and_payload<T, P>(&self, topic: T, payload: P, output_buffer: &mut [u8]) -> Result<usize, WriteError>
+    fn write_var_header_and_payload<T, P, TE, PE>(&self, topic: T, payload: P, output_buffer: &mut [u8]) -> Result<usize, WriteError>
     where
-        T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
-        P: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
+        T: FnOnce(&mut TopicWriter) -> Result<(), TE>,
+        P: FnOnce(&mut PayloadWriter) -> Result<(), PE>,
+        WriteError: From<TE>,
+        WriteError: From<PE>,
     {
         let mut borrowed_buf = BorrowedBuf::new(output_buffer);
         Self::write_topic(topic, &mut borrowed_buf)?;
@@ -222,10 +228,12 @@ impl OutPublish {
 
         Ok(borrowed_buf.len())
     }
-    pub fn write<'a, T, P>(&self, topic: T, payload: P, output_buffer: &'a mut [u8]) -> Result<&'a [u8], WriteError>
+    pub fn write<'a, T, P, TE, PE>(&self, topic: T, payload: P, output_buffer: &'a mut [u8]) -> Result<&'a [u8], WriteError>
     where
-        T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
-        P: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
+        T: FnOnce(&mut TopicWriter) -> Result<(), TE>,
+        P: FnOnce(&mut PayloadWriter) -> Result<(), PE>,
+        WriteError: From<TE>,
+        WriteError: From<PE>,
     {
         // The fixed header is maximum 5 bytes, so reserve space for this
         // so we can write the fixed header after the variable header and payload
@@ -277,7 +285,7 @@ mod tests
             retain: false,
         }.write(|x| x.add_str("hello"), |x| {
             core::iter::repeat(1).take(128).enumerate().for_each(|(i, _)| x.add_u8(i as u8).unwrap());
-            Ok(())
+            Result::<(), WriteError>::Ok(())
         }, &mut buffer).unwrap();
 
         assert_eq!(output.len(), 1+2+2+5+128);
