@@ -11,6 +11,8 @@
 //! It is up to the user to ensure that packet ids don't collide when publishing data, as well
 //! as finishing published data etc.
 //!
+//! **Note:** The initial subscribe message will always have packet ID 1.
+//!
 //! A basic example client is as follows:
 //!
 //! ```no_run
