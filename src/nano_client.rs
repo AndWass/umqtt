@@ -96,6 +96,10 @@
 //! }
 //! ```
 
+mod notification;
+mod platform;
+mod buffer;
+
 use crate::packetview::connack::{ConnAck, ConnectReturnCode};
 use crate::packetview::connect::ConnectOptions;
 use crate::packetview::ping::PingReq;
@@ -105,175 +109,12 @@ use crate::packetview::publish::{OutPublish, PayloadWriter, TopicWriter};
 use crate::packetview::pubrec::PubRec;
 use crate::packetview::subscribe::{Subscribe, SubscribeFilter};
 use crate::packetview::{QoS, WriteError};
-use crate::time::Instant;
 use crate::transport_client::{Notification, TransportClient};
 use core::fmt::{Debug, Formatter};
 
-#[derive(Debug)]
-pub struct TransportNotification<'a> {
-    /// The underlying notification received from the transport client
-    pub notification: Notification<'a>,
-    /// The amount of data this notification takes in the RX buffer
-    taken: usize,
-}
-
-/// The action to take when completing a notification
-pub enum NotificationAction {
-    None,
-    PingReq,
-    PubAck(u16),
-    PubRec(u16),
-    PubComp(u16),
-}
-
-/// Each notification should be completed to ensure buffers are handled correctly
-pub struct NotificationCompletion {
-    taken: usize,
-    action: NotificationAction,
-}
-
-impl NotificationCompletion {
-    /// Create a `NotificationCompletion` with a specific action.
-    pub fn with_action(tick_result: ClientNotification, action: NotificationAction) -> Self {
-        Self {
-            taken: tick_result.taken(),
-            action,
-        }
-    }
-}
-
-/// A notification returned from [`NanoClient::next_notification()`]
-#[derive(Debug)]
-pub enum ClientNotification<'a> {
-    /// The transport has completed a notification.
-    TransportNotification(TransportNotification<'a>),
-    /// The client wants the user to send a ping.
-    SendPing,
-}
-
-impl ClientNotification<'_> {
-    fn taken(&self) -> usize {
-        match self {
-            ClientNotification::TransportNotification(x) => x.taken,
-            ClientNotification::SendPing => 0,
-        }
-    }
-    /// Complete a [`ClientNotification`] with a default completion token.
-    ///
-    /// The following mappings of notification are used:
-    ///
-    /// | Notification  | Action         |
-    /// |---------------|----------------|
-    /// | SendPing      | Send `PingReq` |
-    /// | Publish QoS 0 | No action      |
-    /// | Publish QoS 1 | Send `PubAck`  |
-    /// | Publish QoS 2 | Send `PubRec`  |
-    /// | PubRel        | Send `PubComp` |
-    /// | All other     | No action      |
-    ///
-    pub fn complete(self) -> NotificationCompletion {
-        match self {
-            Self::SendPing => NotificationCompletion {
-                taken: 0,
-                action: NotificationAction::PingReq,
-            },
-            Self::TransportNotification(x) => {
-                let taken = x.taken;
-                let action = match x.notification {
-                    Notification::Publish(publish) => match publish.qos {
-                        QoS::AtMostOnce => NotificationAction::None,
-                        QoS::AtLeastOnce => NotificationAction::PubAck(publish.pkid),
-                        QoS::ExactlyOnce => NotificationAction::PubRec(publish.pkid),
-                    },
-                    Notification::PubRel(pubrel) => NotificationAction::PubComp(pubrel.pkid),
-                    _ => NotificationAction::None,
-                };
-
-                NotificationCompletion { taken, action }
-            }
-        }
-    }
-
-    /// Complete a [`ClientNotification`] with no action.
-    ///
-    pub fn complete_no_action(self) -> NotificationCompletion {
-        NotificationCompletion {
-            taken: self.taken(),
-            action: NotificationAction::None,
-        }
-    }
-
-    /// Complete a [`ClientNotification`] with a default completion token.
-    ///
-    /// The following mappings of notification are used:
-    ///
-    /// | Notification  | Action         |
-    /// |---------------|----------------|
-    /// | SendPing      | Send `PingReq` |
-    /// | All other     | No action      |
-    ///
-    pub fn complete_no_pub_ack(self) -> NotificationCompletion {
-        match self {
-            ClientNotification::TransportNotification(x) => NotificationCompletion {
-                taken: x.taken,
-                action: NotificationAction::None,
-            },
-            ClientNotification::SendPing => NotificationCompletion {
-                taken: 0,
-                action: NotificationAction::PingReq,
-            },
-        }
-    }
-}
-
-/// Trait that describes the platform that this client runs on.
-#[allow(async_fn_in_trait)]
-pub trait Platform {
-    /// Platform-specific error for all the platform methods.
-    type Error;
-    /// Connect the underlying transport. If already connected it should reconnect again.
-    async fn connect_transport(&mut self) -> Result<(), Self::Error>;
-    /// Write all the data in `buf` to the underlying transport.
-    ///
-    /// # Arguments
-    ///
-    ///   * `buf` - Buffer of data to write.
-    ///
-    /// # Returns
-    ///
-    ///   * `Ok(())` - All data was written
-    ///   * `Err(e)` - An error ocurred. The client will treat this as the transport has closed.
-    ///
-    async fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error>;
-    /// Read some data into `buf`.
-    ///
-    /// **Note:** This should be cancel-safe for correct operation of the `NanoClient`.
-    ///
-    /// Buffer doesn't have to be filled, it is perfectly valid to return as soon as any bytes has been
-    /// read, or on a timeout.
-    ///
-    /// # Arguments
-    ///
-    ///   * `buf` - Buffer to store the read data
-    ///   * `timeout` - Timeout when the read operation should be aborted if no data has been received.
-    ///
-    /// # Returns
-    ///
-    ///   * `Ok(None)` - Timeout has expired.
-    ///   * `Ok(Some(0))` - The underlying transport has closed (EOF). The client will treat this as transport has closed.
-    ///   * `Ok(Some(n))` - `n` bytes were transferred to `buf`.
-    ///   * `Err(_)` - An error has ocurred. The client will treat this as transport has closed.
-    ///
-    async fn read_some(
-        &mut self,
-        buf: &mut [u8],
-        timeout: Option<core::time::Duration>,
-    ) -> Result<Option<usize>, Self::Error>;
-    /// Get the current time
-    ///
-    /// Gets the current time since some unspecified epoch.
-    fn now(&mut self) -> Instant;
-}
+pub use notification::*;
+pub use platform::*;
+use buffer::Buffer;
 
 /// The error type used by [`NanoClient`]
 pub enum Error<P: Platform> {
@@ -297,38 +138,6 @@ where
             Error::ReadError(x) => write!(f, "ReadError({:?})", x),
             Error::WriteError(x) => write!(f, "WriteError({:?})", x),
         }
-    }
-}
-
-struct Buffer<'a> {
-    buffer: &'a mut [u8],
-    used: usize,
-}
-
-impl<'a> Buffer<'a> {
-    fn new(buffer: &'a mut [u8]) -> Self {
-        Self { buffer, used: 0 }
-    }
-
-    fn reset(&mut self) {
-        self.used = 0;
-    }
-
-    fn used_slice(&self) -> &[u8] {
-        &self.buffer[..self.used]
-    }
-
-    fn unused_slice_mut(&mut self) -> &mut [u8] {
-        &mut self.buffer[self.used..]
-    }
-
-    fn remove_prefix(&mut self, len: usize) {
-        if len >= self.used {
-            self.used = 0;
-            return;
-        }
-        self.buffer.copy_within(len..self.used, 0);
-        self.used -= len;
     }
 }
 
@@ -400,7 +209,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
                     self.transport_client.on_transport_closed();
                     return Err(Error::ConnectionClosed);
                 }
-                self.rx_buffer.used += n;
+                self.rx_buffer.advance(n);
                 Ok(Some(n))
             }
             Err(e) => {
@@ -519,7 +328,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
             let Some(_read_result) = self.read_some_with_timeout(next_ping).await? else {
                 return Ok(ClientNotification::SendPing);
             };
-            if crate::packetview::check(self.rx_buffer.used_slice(), self.rx_buffer.buffer.len())
+            if crate::packetview::check(self.rx_buffer.used_slice(), self.rx_buffer.capacity())
                 .is_ok()
             {
                 break;
@@ -542,6 +351,14 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     }
 
     /// User calls this when a notification is done and should be completed.
+    ///
+    /// The [`NotificationCompletion`] is obtained by calling one of the [`ClientNotification::complete`]
+    /// functions.
+    ///
+    /// Failure to call this will cause the same notification to be re-received over and over again.
+    ///
+    /// This may cause the client to write data to the broker, so this is **not** cancellation safe.
+    ///
     pub async fn complete_notification(
         &mut self,
         completion: NotificationCompletion,
@@ -558,6 +375,10 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         }
     }
 
+    /// Send a ping request.
+    ///
+    /// This is usually done from [`complete_notification`] but can be done manually if for instance
+    /// no keep alive is configured.
     pub async fn send_ping_request(&mut self) -> Result<(), Error<P>> {
         let out_size = PingReq
             .write(self.tx_buffer)
@@ -566,6 +387,9 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         Ok(())
     }
 
+    /// Send an MQTT PubAck message with a given packet id.
+    ///
+    ///
     pub async fn send_pub_ack(&mut self, packet_id: u16) -> Result<(), Error<P>> {
         let out_size = PubAck::new(packet_id)
             .write(self.tx_buffer)
@@ -587,15 +411,27 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         self.write_all(out_size).await
     }
 
-    pub async fn send_publish<T, D>(
+    /// Send an MQTT publish message with the given flags.
+    ///
+    /// Topic and payload are not given as buffers, instead
+    /// they are functions that can be used to directly write topic and payload
+    /// to the end-buffer.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// ```
+    pub async fn send_publish<T, D, TE, DE>(
         &mut self,
         publish: OutPublish,
         topic: T,
         payload: D,
     ) -> Result<(), Error<P>>
     where
-        T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
-        D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
+        T: FnOnce(&mut TopicWriter) -> Result<(), TE>,
+        D: FnOnce(&mut PayloadWriter) -> Result<(), DE>,
+        WriteError: From<TE>,
+        WriteError: From<DE>,
     {
         let written = publish
             .write(topic, payload, self.tx_buffer)
@@ -603,10 +439,12 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         Self::write_buffer(&mut self.transport_client, &mut self.platform, written).await
     }
 
-    pub async fn send_publish_qos0<T, D>(&mut self, topic: T, payload: D) -> Result<(), Error<P>>
+    pub async fn send_publish_qos0<T, D, TE, DE>(&mut self, topic: T, payload: D) -> Result<(), Error<P>>
     where
-        T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
-        D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
+        T: FnOnce(&mut TopicWriter) -> Result<(), TE>,
+        D: FnOnce(&mut PayloadWriter) -> Result<(), DE>,
+        WriteError: From<TE>,
+        WriteError: From<DE>,
     {
         self.send_publish(
             OutPublish {
@@ -621,7 +459,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         .await
     }
 
-    pub async fn send_publish_qos1<T, D>(
+    pub async fn send_publish_qos1<T, D, TE, DE>(
         &mut self,
         packet_id: u16,
         topic: T,
@@ -630,6 +468,8 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     where
         T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
         D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
+        WriteError: From<TE>,
+        WriteError: From<DE>,
     {
         self.send_publish(
             OutPublish {
