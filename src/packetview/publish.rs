@@ -128,7 +128,10 @@ pub struct OutPublish {
 pub struct TopicWriter<'a, 'b: 'a>(&'a mut BorrowedBuf<'b>);
 
 impl<'a, 'b: 'a> TopicWriter<'a, 'b> {
-
+    
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     pub fn capacity(&self) -> usize {
         self.0.capacity()
     }
@@ -155,7 +158,9 @@ impl<'a, 'b: 'a> core::fmt::Write for TopicWriter<'a, 'b> {
 pub struct PayloadWriter<'a, 'b: 'a>(&'a mut BorrowedBuf<'b>);
 
 impl<'a, 'b: 'a> PayloadWriter<'a, 'b> {
-
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     pub fn capacity(&self) -> usize {
         self.0.capacity()
     }
