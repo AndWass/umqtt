@@ -94,19 +94,18 @@
 //! }
 //! ```
 
-use crate::packetview::QoS;
+use crate::packetview::{QoS, WriteError};
 use crate::packetview::connack::{ConnAck, ConnectReturnCode};
 use crate::packetview::connect::ConnectOptions;
 use crate::packetview::ping::PingReq;
 use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
-use crate::packetview::publish::{PublishTopicIter};
-use crate::packetview::topic_iterator::TopicIterator;
 use crate::packetview::pubrec::PubRec;
 use crate::packetview::subscribe::{Subscribe, SubscribeFilter};
 use crate::time::Instant;
 use crate::transport_client::{Notification, TransportClient};
 use core::fmt::{Debug, Formatter};
+use crate::packetview::publish::{OutPublish, PayloadWriter, TopicWriter};
 
 #[derive(Debug)]
 pub struct TransportNotification<'a> {
@@ -349,6 +348,21 @@ pub struct NanoClient<'a, P> {
 }
 
 impl<'a, P: Platform> NanoClient<'a, P> {
+    async fn write_buffer(transport_client: &mut TransportClient, platform: &mut P, buffer: &[u8]) -> Result<(), Error<P>> {
+        if transport_client.is_disconnected() {
+            return Err(Error::ConnectionClosed);
+        }
+        match platform.write_all(buffer).await {
+            Ok(()) => {
+                transport_client.on_packet_sent(platform.now());
+                Ok(())
+            }
+            Err(e) => {
+                transport_client.on_transport_closed();
+                Err(Error::IO(e))
+            }
+        }
+    }
     async fn connect_transport(&mut self) -> Result<(), Error<P>> {
         match self.platform.connect_transport().await {
             Ok(()) => Ok(()),
@@ -357,19 +371,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     }
 
     async fn write_all(&mut self, size: usize) -> Result<(), Error<P>> {
-        if self.transport_client.is_disconnected() {
-            return Err(Error::ConnectionClosed);
-        }
-        match self.platform.write_all(&self.tx_buffer[..size]).await {
-            Ok(()) => {
-                self.transport_client.on_packet_sent(self.platform.now());
-                Ok(())
-            }
-            Err(e) => {
-                self.transport_client.on_transport_closed();
-                Err(Error::IO(e))
-            }
-        }
+        Self::write_buffer(&mut self.transport_client, &mut self.platform, &self.tx_buffer[..size]).await
     }
 
     async fn read_some_with_timeout(
@@ -578,45 +580,40 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         self.write_all(out_size).await
     }
 
-    pub async fn send_publish<'t, I, T>(&mut self, publish: T) -> Result<(), Error<P>>
+    pub async fn send_publish<T, D>(&mut self, publish: OutPublish, topic: T, payload: D) -> Result<(), Error<P>>
     where
-        I: Iterator<Item=&'t str> + Sized + Clone,
-        T: Into<PublishTopicIter<'t, I>>,
+        T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
+        D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
     {
-        let out_size = publish.into()
-            .write(self.tx_buffer)
+        let written = publish.write(topic, payload, &mut self.tx_buffer)
             .map_err(|e| Error::WriteError(e))?;
-        self.write_all(out_size).await
+        Self::write_buffer(&mut self.transport_client, &mut self.platform, written).await
     }
 
-    pub async fn send_publish_qos0<'t, I, T>(&mut self, topic: T, data: &'t [u8]) -> Result<(), Error<P>>
+    pub async fn send_publish_qos0<T, D>(&mut self, topic: T, payload: D) -> Result<(), Error<P>>
     where
-        T: Into<TopicIterator<'t, I>>,
-        I: Iterator<Item=&'t str> + Clone,
+        T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
+        D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
     {
-        self.send_publish(PublishTopicIter {
-            payload: data,
+        self.send_publish(OutPublish {
             pkid: 0,
             qos: QoS::AtMostOnce,
             retain: false,
             dup: false,
-            topic: topic.into()
-        }).await
+        }, topic, payload).await
     }
 
-    pub async fn send_publish_qos1<'t, I, T>(&mut self, packet_id: u16, topic: T, data: &'t [u8]) -> Result<(), Error<P>>
+    pub async fn send_publish_qos1<T, D>(&mut self, packet_id: u16, topic: T, payload: D) -> Result<(), Error<P>>
     where
-        T: Into<TopicIterator<'t, I>>,
-        I: Iterator<Item=&'t str> + Clone,
+        T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
+        D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
     {
-        self.send_publish(PublishTopicIter {
+        self.send_publish(OutPublish {
             pkid: packet_id,
-            payload: data,
-            topic: topic.into(),
             dup: false,
             retain: false,
             qos: QoS::AtLeastOnce,
-        })
+        }, topic, payload)
         .await
     }
 
@@ -699,7 +696,7 @@ mod tests {
 
         let res = spin_on::spin_on(client.next_notification());
         assert!(res.is_err());
-        let res = spin_on::spin_on(client.send_publish_qos0("/test", b"hello"));
+        let res = spin_on::spin_on(client.send_publish_qos0(|x| x.add_str("/test"), |x| x.add_slice(b"hello")));
         assert!(res.is_err());
         let res = spin_on::spin_on(client.send_ping_request());
         assert!(res.is_err());
@@ -728,7 +725,7 @@ mod tests {
             login: None,
         };
 
-        let res = spin_on::spin_on(client.connect(&connect_options, &[]));
+        let _res = spin_on::spin_on(client.connect(&connect_options, &[])).unwrap();
         assert_eq!(data.borrow().packets_written.len(), 1);
     }
 }

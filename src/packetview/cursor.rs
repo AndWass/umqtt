@@ -103,6 +103,14 @@ impl<'a> WriteCursor<'a> {
             Ok(())
         }
     }
+
+    pub fn advance(&mut self, n: usize) {
+        self.next_write_index += n;
+    }
+
+    pub fn unused_capacity(&mut self) -> &mut [u8] {
+        &mut self.buffer[self.next_write_index..]
+    }
 }
 
 impl Index<usize> for WriteCursor<'_> {
