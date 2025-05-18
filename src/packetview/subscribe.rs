@@ -1,5 +1,7 @@
-use crate::packetview::{qos, read_u16, write_mqtt_string, write_remaining_length, Error, FixedHeader, QoS, WriteError};
 use crate::packetview::cursor::{Cursor, WriteCursor};
+use crate::packetview::{
+    Error, FixedHeader, QoS, WriteError, qos, read_u16, write_mqtt_string, write_remaining_length,
+};
 
 pub struct BytesIterator<'a>(core::slice::Iter<'a, u8>);
 
@@ -19,10 +21,7 @@ impl<'a> Iterator for BytesIterator<'a> {
         let qos = qos(data_slice[topic_len]).ok()?;
 
         self.0 = data_slice[topic_len + 1..].iter();
-        Some(SubscribeFilter {
-            qos,
-            path,
-        })
+        Some(SubscribeFilter { qos, path })
     }
 }
 
@@ -74,7 +73,7 @@ impl<'a> Iterator for StorageIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             StorageIter::Slice(iter) => iter.next().cloned(),
-            StorageIter::Bytes(iter) => iter.next()
+            StorageIter::Bytes(iter) => iter.next(),
         }
     }
 }
@@ -97,12 +96,8 @@ impl<'a> Subscribe<'a> {
     fn len(&self) -> usize {
         // len of pkid + subscribe filter len
         let filter_len = match &self.filters {
-            Storage::Slice(slice) => {
-                slice.iter().fold(0, |s, t| s + t.len())
-            }
-            Storage::WireBytes(bytes) => {
-                BytesIterator(bytes.iter()).fold(0, |s, t| s + t.len())
-            }
+            Storage::Slice(slice) => slice.iter().fold(0, |s, t| s + t.len()),
+            Storage::WireBytes(bytes) => BytesIterator(bytes.iter()).fold(0, |s, t| s + t.len()),
         };
         2 + filter_len
     }
@@ -120,14 +115,12 @@ impl<'a> Subscribe<'a> {
 
         if filter_count == 0 {
             Err(Error::EmptySubscription)
-        }
-        else if !bytes_iter.0.as_slice().is_empty() {
+        } else if !bytes_iter.0.as_slice().is_empty() {
             Err(Error::MalformedPacket)
-        }
-        else {
+        } else {
             Ok(Self {
                 pkid,
-                filters: Storage::WireBytes(bytes.as_slice())
+                filters: Storage::WireBytes(bytes.as_slice()),
             })
         }
     }
@@ -205,8 +198,8 @@ impl core::fmt::Debug for SubscribeFilter<'_> {
 
 #[cfg(test)]
 mod test {
-    use crate::packetview::parse_fixed_header;
     use super::*;
+    use crate::packetview::parse_fixed_header;
 
     #[test]
     fn subscribe_parsing_works() {

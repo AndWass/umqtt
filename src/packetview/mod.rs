@@ -2,22 +2,22 @@ use crate::packetview::cursor::{Cursor, WriteCursor};
 
 mod cursor;
 
-pub mod connect;
-pub mod packet;
-pub mod publish;
-pub mod puback;
-pub mod pubrec;
-pub mod connack;
-pub mod pubrel;
-pub mod pubcomp;
-pub mod subscribe;
-pub mod suback;
-pub mod unsubscribe;
-pub mod unsuback;
-pub mod ping;
-pub mod disconnect;
-pub mod topic_iterator;
 pub mod borrowed_buf;
+pub mod connack;
+pub mod connect;
+pub mod disconnect;
+pub mod packet;
+pub mod ping;
+pub mod puback;
+pub mod pubcomp;
+pub mod publish;
+pub mod pubrec;
+pub mod pubrel;
+pub mod suback;
+pub mod subscribe;
+pub mod topic_iterator;
+pub mod unsuback;
+pub mod unsubscribe;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub enum Error {
@@ -42,11 +42,10 @@ pub enum Error {
 pub enum WriteError {
     MalformedPacket,
     NotEnoughCapacity,
-    PayloadTooLong
+    PayloadTooLong,
 }
 
-impl From<core::fmt::Error> for WriteError
-{
+impl From<core::fmt::Error> for WriteError {
     fn from(_value: core::fmt::Error) -> Self {
         Self::NotEnoughCapacity
     }
@@ -274,7 +273,7 @@ fn read_u16(stream: &mut Cursor) -> Result<u16, Error> {
 }
 
 /// Reads a series of bytes with a length from a byte stream
-fn read_mqtt_bytes<'a>(stream: &mut Cursor<'a>) -> Result<&'a[u8], Error> {
+fn read_mqtt_bytes<'a>(stream: &mut Cursor<'a>) -> Result<&'a [u8], Error> {
     let len = read_u16(stream)? as usize;
 
     // Prevent attacks with wrong remaining length. This method is used in

@@ -1,6 +1,5 @@
 use crate::packetview::connack::{ConnAck, ConnectReturnCode};
-use crate::packetview::connect::{ConnectOptions};
-use crate::packetview::{Error, PacketType};
+use crate::packetview::connect::ConnectOptions;
 use crate::packetview::packet::Packet;
 use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
@@ -9,6 +8,7 @@ use crate::packetview::pubrec::PubRec;
 use crate::packetview::pubrel::PubRel;
 use crate::packetview::suback::SubAck;
 use crate::packetview::unsuback::UnsubAck;
+use crate::packetview::{Error, PacketType};
 use crate::time::Instant;
 
 #[derive(Debug)]
@@ -131,7 +131,10 @@ impl TransportClient {
     /// assert!(matches!(res, None));
     /// ```
     ///
-    pub fn on_bytes_received<'a>(&mut self, data: &'a [u8]) -> Result<Option<(Notification<'a>, usize)>, Error> {
+    pub fn on_bytes_received<'a>(
+        &mut self,
+        data: &'a [u8],
+    ) -> Result<Option<(Notification<'a>, usize)>, Error> {
         match self.state {
             State::Disconnected => return Ok(Some((Notification::Disconnected, 0))),
             State::TransportConnected => {
@@ -140,23 +143,22 @@ impl TransportClient {
                     Err(x) => {
                         self.state = State::Disconnected;
                         Err(x)
-                    },
+                    }
                     Ok((Packet::ConnAck(c), taken)) => {
                         if c.code == ConnectReturnCode::Success {
                             self.state = State::Connected;
                             Ok(Some((Notification::ConnAck(c), taken)))
-                        }
-                        else {
+                        } else {
                             self.state = State::Disconnected;
                             Ok(Some((Notification::Disconnected, 0)))
                         }
-                    },
+                    }
                     Ok((p, _)) => {
                         self.state = State::Disconnected;
                         Err(Error::UnexpectedPacket(p.packet_type()))
                     }
                 };
-            },
+            }
             State::Connected => {}
         };
         match Packet::read(data, self.max_packet_size) {
@@ -164,12 +166,14 @@ impl TransportClient {
             Err(x) => {
                 self.state = State::Disconnected;
                 Err(x)
-            },
+            }
             Ok((Packet::ConnAck(_), _taken)) => {
                 self.state = State::Disconnected;
                 Err(Error::UnexpectedPacket(PacketType::ConnAck))
-            },
-            Ok((Packet::Publish(publish), taken)) => Ok(Some((Notification::Publish(publish), taken))),
+            }
+            Ok((Packet::Publish(publish), taken)) => {
+                Ok(Some((Notification::Publish(publish), taken)))
+            }
             Ok((Packet::PubAck(ack), taken)) => Ok(Some((Notification::PubAck(ack), taken))),
             Ok((Packet::PubRec(rec), taken)) => Ok(Some((Notification::PubRec(rec), taken))),
             Ok((Packet::PubRel(rel), taken)) => Ok(Some((Notification::PubRel(rel), taken))),
@@ -187,8 +191,7 @@ impl TransportClient {
     pub fn next_ping_in(&self, now: Instant) -> Option<core::time::Duration> {
         if self.keep_alive > Self::ZERO_KEEP_ALIVE {
             Some(self.packet_send_at - now)
-        }
-        else {
+        } else {
             None
         }
     }

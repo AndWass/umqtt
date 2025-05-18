@@ -96,18 +96,18 @@
 //! }
 //! ```
 
-use crate::packetview::{QoS, WriteError};
 use crate::packetview::connack::{ConnAck, ConnectReturnCode};
 use crate::packetview::connect::ConnectOptions;
 use crate::packetview::ping::PingReq;
 use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
+use crate::packetview::publish::{OutPublish, PayloadWriter, TopicWriter};
 use crate::packetview::pubrec::PubRec;
 use crate::packetview::subscribe::{Subscribe, SubscribeFilter};
+use crate::packetview::{QoS, WriteError};
 use crate::time::Instant;
 use crate::transport_client::{Notification, TransportClient};
 use core::fmt::{Debug, Formatter};
-use crate::packetview::publish::{OutPublish, PayloadWriter, TopicWriter};
 
 #[derive(Debug)]
 pub struct TransportNotification<'a> {
@@ -350,7 +350,11 @@ pub struct NanoClient<'a, P> {
 }
 
 impl<'a, P: Platform> NanoClient<'a, P> {
-    async fn write_buffer(transport_client: &mut TransportClient, platform: &mut P, buffer: &[u8]) -> Result<(), Error<P>> {
+    async fn write_buffer(
+        transport_client: &mut TransportClient,
+        platform: &mut P,
+        buffer: &[u8],
+    ) -> Result<(), Error<P>> {
         if transport_client.is_disconnected() {
             return Err(Error::ConnectionClosed);
         }
@@ -373,7 +377,12 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     }
 
     async fn write_all(&mut self, size: usize) -> Result<(), Error<P>> {
-        Self::write_buffer(&mut self.transport_client, &mut self.platform, &self.tx_buffer[..size]).await
+        Self::write_buffer(
+            &mut self.transport_client,
+            &mut self.platform,
+            &self.tx_buffer[..size],
+        )
+        .await
     }
 
     async fn read_some_with_timeout(
@@ -436,11 +445,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     ///
     /// A new [`NanoClient`]
     ///
-    pub fn new(
-        platform: P,
-        tx_buffer: &'a mut [u8],
-        rx_buffer: &'a mut [u8]
-    ) -> Self {
+    pub fn new(platform: P, tx_buffer: &'a mut [u8], rx_buffer: &'a mut [u8]) -> Self {
         Self {
             transport_client: TransportClient::new(rx_buffer.len()),
             platform,
@@ -468,7 +473,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     pub async fn connect<'b>(
         &mut self,
         connect_options: &ConnectOptions<'_>,
-        subscriptions: &'b [SubscribeFilter<'b>]
+        subscriptions: &'b [SubscribeFilter<'b>],
     ) -> Result<ConnAck, Error<P>> {
         self.connect_transport().await?;
         self.transport_client.on_transport_opened(connect_options);
@@ -582,12 +587,18 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         self.write_all(out_size).await
     }
 
-    pub async fn send_publish<T, D>(&mut self, publish: OutPublish, topic: T, payload: D) -> Result<(), Error<P>>
+    pub async fn send_publish<T, D>(
+        &mut self,
+        publish: OutPublish,
+        topic: T,
+        payload: D,
+    ) -> Result<(), Error<P>>
     where
         T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
         D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
     {
-        let written = publish.write(topic, payload, self.tx_buffer)
+        let written = publish
+            .write(topic, payload, self.tx_buffer)
             .map_err(|e| Error::WriteError(e))?;
         Self::write_buffer(&mut self.transport_client, &mut self.platform, written).await
     }
@@ -597,25 +608,39 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
         D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
     {
-        self.send_publish(OutPublish {
-            pkid: 0,
-            qos: QoS::AtMostOnce,
-            retain: false,
-            dup: false,
-        }, topic, payload).await
+        self.send_publish(
+            OutPublish {
+                pkid: 0,
+                qos: QoS::AtMostOnce,
+                retain: false,
+                dup: false,
+            },
+            topic,
+            payload,
+        )
+        .await
     }
 
-    pub async fn send_publish_qos1<T, D>(&mut self, packet_id: u16, topic: T, payload: D) -> Result<(), Error<P>>
+    pub async fn send_publish_qos1<T, D>(
+        &mut self,
+        packet_id: u16,
+        topic: T,
+        payload: D,
+    ) -> Result<(), Error<P>>
     where
         T: FnOnce(&mut TopicWriter) -> Result<(), WriteError>,
         D: FnOnce(&mut PayloadWriter) -> Result<(), WriteError>,
     {
-        self.send_publish(OutPublish {
-            pkid: packet_id,
-            dup: false,
-            retain: false,
-            qos: QoS::AtLeastOnce,
-        }, topic, payload)
+        self.send_publish(
+            OutPublish {
+                pkid: packet_id,
+                dup: false,
+                retain: false,
+                qos: QoS::AtLeastOnce,
+            },
+            topic,
+            payload,
+        )
         .await
     }
 
@@ -631,6 +656,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
 #[cfg(test)]
 mod tests {
     use crate::nano_client::{NanoClient, Platform};
+    use crate::packetview::connect::ConnectOptions;
     use crate::time::Instant;
     use alloc::boxed::Box;
     use alloc::collections::VecDeque;
@@ -638,7 +664,6 @@ mod tests {
     use alloc::vec::Vec;
     use core::cell::RefCell;
     use core::time::Duration;
-    use crate::packetview::connect::ConnectOptions;
 
     #[derive(Default)]
     struct TestPlatformData {
@@ -698,7 +723,9 @@ mod tests {
 
         let res = spin_on::spin_on(client.next_notification());
         assert!(res.is_err());
-        let res = spin_on::spin_on(client.send_publish_qos0(|x| x.add_str("/test"), |x| x.add_slice(b"hello")));
+        let res = spin_on::spin_on(
+            client.send_publish_qos0(|x| x.add_str("/test"), |x| x.add_slice(b"hello")),
+        );
         assert!(res.is_err());
         let res = spin_on::spin_on(client.send_ping_request());
         assert!(res.is_err());
@@ -714,7 +741,9 @@ mod tests {
     fn no_subscribe_on_empty_topic_filter_list() {
         let platform = TestPlatform::new();
         let data = platform.data.clone();
-        data.borrow_mut().packets_to_read.push_back(Box::new([0x20, 2, 0, 0])); // CONNACK.
+        data.borrow_mut()
+            .packets_to_read
+            .push_back(Box::new([0x20, 2, 0, 0])); // CONNACK.
         let mut tx_buffer = [0u8; 256];
         let mut rx_buffer = [0u8; 256];
         let mut client = NanoClient::new(platform, &mut tx_buffer, &mut rx_buffer);

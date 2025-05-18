@@ -1,5 +1,5 @@
-use crate::packetview::{read_u16, Error, FixedHeader, WriteError};
 use crate::packetview::cursor::{Cursor, WriteCursor};
+use crate::packetview::{Error, FixedHeader, WriteError, read_u16};
 
 /// Acknowledgement to unsubscribe
 #[derive(Debug, Clone, PartialEq, Eq)]

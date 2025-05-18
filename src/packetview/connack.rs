@@ -1,5 +1,5 @@
-use crate::packetview::{read_u8, write_remaining_length, Error, FixedHeader, WriteError};
 use crate::packetview::cursor::{Cursor, WriteCursor};
+use crate::packetview::{Error, FixedHeader, WriteError, read_u8, write_remaining_length};
 
 /// Return code in connack
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,9 +40,11 @@ pub struct ConnAck {
 }
 
 impl ConnAck {
-
     pub const fn new(session_present: bool, code: ConnectReturnCode) -> Self {
-        Self { session_present, code }
+        Self {
+            session_present,
+            code,
+        }
     }
 
     fn len(&self) -> usize {

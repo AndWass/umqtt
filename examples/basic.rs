@@ -1,10 +1,10 @@
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use umqtt::nano_client::{NanoClient, ClientNotification};
-use umqtt::packetview::connect::ConnectOptions;
+use umqtt::nano_client::{ClientNotification, NanoClient};
 use umqtt::packetview::QoS;
-use umqtt::packetview::subscribe::{SubscribeFilter};
+use umqtt::packetview::connect::ConnectOptions;
+use umqtt::packetview::subscribe::SubscribeFilter;
 use umqtt::time::Instant;
 
 struct Platform {
@@ -24,15 +24,18 @@ impl umqtt::nano_client::Platform for Platform {
         self.stream.as_mut().unwrap().write_all(buf).await
     }
 
-    async fn read_some(&mut self, buf: &mut [u8], timeout: Option<Duration>) -> Result<Option<usize>, Self::Error> {
+    async fn read_some(
+        &mut self,
+        buf: &mut [u8],
+        timeout: Option<Duration>,
+    ) -> Result<Option<usize>, Self::Error> {
         println!("Reading with timeout {:?}", timeout);
         if let Some(timeout) = timeout {
             match tokio::time::timeout(timeout, self.stream.as_mut().unwrap().read(buf)).await {
                 Ok(x) => Ok(Some(x?)),
                 Err(_) => Ok(None),
             }
-        }
-        else {
+        } else {
             self.stream.as_mut().unwrap().read(buf).await.map(Some)
         }
     }
@@ -42,14 +45,20 @@ impl umqtt::nano_client::Platform for Platform {
     }
 }
 
-async fn run_client<P: umqtt::nano_client::Platform>(client: &mut NanoClient<'_, P>) -> Result<(), umqtt::nano_client::Error<P>> {
+async fn run_client<P: umqtt::nano_client::Platform>(
+    client: &mut NanoClient<'_, P>,
+) -> Result<(), umqtt::nano_client::Error<P>> {
     let start_time = tokio::time::Instant::now();
     loop {
         let tick_result = client.next_notification().await?;
         match &tick_result {
             ClientNotification::TransportNotification(notif) => {
-                if let umqtt::transport_client::Notification::Publish(publish) = &notif.notification {
-                    println!("Publish received on topic '{}': {:?}", publish.topic, publish.payload);
+                if let umqtt::transport_client::Notification::Publish(publish) = &notif.notification
+                {
+                    println!(
+                        "Publish received on topic '{}': {:?}",
+                        publish.topic, publish.payload
+                    );
                 }
             }
             ClientNotification::SendPing => {
@@ -86,12 +95,10 @@ async fn main() {
             if connack.code.is_success() {
                 println!("Connected");
                 println!("{:?}", run_client(&mut client).await);
-            }
-            else {
+            } else {
                 println!("Failed to connect, server returned {:?}", connack);
             }
-        }
-        else {
+        } else {
             println!("Failed to connect...");
         }
         tokio::time::sleep(Duration::from_secs(20)).await;

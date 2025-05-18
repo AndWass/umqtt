@@ -1,4 +1,4 @@
-use core::ops::{Sub, SubAssign, Add, AddAssign};
+use core::ops::{Add, AddAssign, Sub, SubAssign};
 use core::time::Duration;
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy)]
@@ -15,13 +15,13 @@ impl Instant {
     }
     pub const fn from_seconds_since_epoch(seconds: u64) -> Self {
         Self {
-            milliseconds: seconds*1000,
+            milliseconds: seconds * 1000,
         }
     }
 
     pub const fn add_seconds(&self, seconds: u64) -> Self {
         Self {
-            milliseconds: self.milliseconds + 1000*seconds,
+            milliseconds: self.milliseconds + 1000 * seconds,
         }
     }
 }

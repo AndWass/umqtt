@@ -1,5 +1,5 @@
 use crate::packetview::cursor::{Cursor, WriteCursor};
-use crate::packetview::{read_u16, write_remaining_length, Error, FixedHeader, WriteError};
+use crate::packetview::{Error, FixedHeader, WriteError, read_u16, write_remaining_length};
 
 /// Acknowledgement to QoS2 publish
 #[derive(Debug, Clone, PartialEq, Eq)]

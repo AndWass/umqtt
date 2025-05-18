@@ -1,6 +1,5 @@
-use crate::packetview::connect::Connect;
-use crate::packetview::{Error, FixedHeader, PacketType};
 use crate::packetview::connack::ConnAck;
+use crate::packetview::connect::Connect;
 use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
 use crate::packetview::publish::Publish;
@@ -10,6 +9,7 @@ use crate::packetview::suback::SubAck;
 use crate::packetview::subscribe::Subscribe;
 use crate::packetview::unsuback::UnsubAck;
 use crate::packetview::unsubscribe::Unsubscribe;
+use crate::packetview::{Error, FixedHeader, PacketType};
 
 /// Encapsulates all MQTT packet types
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +59,7 @@ impl<'a> Packet<'a> {
             PacketType::UnsubAck => Packet::UnsubAck(UnsubAck::read_exact(fixed_header, data)?),
             PacketType::PingReq => Packet::PingReq,
             PacketType::PingResp => Packet::PingResp,
-            PacketType::Disconnect => Packet::Disconnect
+            PacketType::Disconnect => Packet::Disconnect,
         };
 
         Ok(packet)

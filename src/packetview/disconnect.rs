@@ -1,5 +1,5 @@
-use crate::packetview::cursor::WriteCursor;
 use crate::packetview::WriteError;
+use crate::packetview::cursor::WriteCursor;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Disconnect;

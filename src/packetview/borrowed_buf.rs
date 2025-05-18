@@ -1,6 +1,6 @@
-use core::ops::{Index, IndexMut};
-use core::ops::Range;
 use crate::packetview::WriteError;
+use core::ops::Range;
+use core::ops::{Index, IndexMut};
 
 pub struct BorrowedBuf<'a> {
     buffer: &'a mut [u8],
@@ -12,10 +12,7 @@ impl<'a> BorrowedBuf<'a> {
         &mut self.buffer[self.len..(self.len + len)]
     }
     pub fn new(buffer: &'a mut [u8]) -> Self {
-        Self {
-            buffer,
-            len: 0,
-        }
+        Self { buffer, len: 0 }
     }
 
     pub fn capacity(&self) -> usize {
@@ -40,8 +37,7 @@ impl<'a> BorrowedBuf<'a> {
             self.unwritten_slice(data.len()).copy_from_slice(data);
             self.len += data.len();
             Ok(())
-        }
-        else {
+        } else {
             Err(WriteError::NotEnoughCapacity)
         }
     }

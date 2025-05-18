@@ -1,6 +1,9 @@
-use crate::packetview::{qos, read_mqtt_string, read_u16, write_mqtt_string, write_remaining_length, Error, FixedHeader, QoS, WriteError};
 use crate::packetview::borrowed_buf::BorrowedBuf;
 use crate::packetview::cursor::{Cursor, WriteCursor};
+use crate::packetview::{
+    Error, FixedHeader, QoS, WriteError, qos, read_mqtt_string, read_u16, write_mqtt_string,
+    write_remaining_length,
+};
 
 /// Publish packet
 #[derive(Clone, PartialEq, Eq)]
@@ -24,19 +27,14 @@ impl core::fmt::Debug for Publish<'_> {
 
         let payload = if let Ok(s) = core::str::from_utf8(self.payload) {
             MaybeString::String(s)
-        }
-        else {
+        } else {
             MaybeString::Bytes(self.payload)
         };
 
         write!(
             f,
             "Topic = {}, Qos = {:?}, Retain = {}, Pkid = {:?}, Payload = {:?}",
-            self.topic,
-            self.qos,
-            self.retain,
-            self.pkid,
-            payload
+            self.topic, self.qos, self.retain, self.pkid, payload
         )
     }
 }
@@ -128,7 +126,6 @@ pub struct OutPublish {
 pub struct TopicWriter<'a, 'b: 'a>(&'a mut BorrowedBuf<'b>);
 
 impl<'a, 'b: 'a> TopicWriter<'a, 'b> {
-    
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -207,11 +204,16 @@ impl OutPublish {
         }
 
         let len_bytes = (topic_len as u16).to_be_bytes();
-        buffer[topic_len_start_index..topic_len_start_index+2].copy_from_slice(&len_bytes);
+        buffer[topic_len_start_index..topic_len_start_index + 2].copy_from_slice(&len_bytes);
 
         Ok(())
     }
-    fn write_var_header_and_payload<T, P, TE, PE>(&self, topic: T, payload: P, output_buffer: &mut [u8]) -> Result<usize, WriteError>
+    fn write_var_header_and_payload<T, P, TE, PE>(
+        &self,
+        topic: T,
+        payload: P,
+        output_buffer: &mut [u8],
+    ) -> Result<usize, WriteError>
     where
         T: FnOnce(&mut TopicWriter) -> Result<(), TE>,
         P: FnOnce(&mut PayloadWriter) -> Result<(), PE>,
@@ -233,7 +235,12 @@ impl OutPublish {
 
         Ok(borrowed_buf.len())
     }
-    pub fn write<'a, T, P, TE, PE>(&self, topic: T, payload: P, output_buffer: &'a mut [u8]) -> Result<&'a [u8], WriteError>
+    pub fn write<'a, T, P, TE, PE>(
+        &self,
+        topic: T,
+        payload: P,
+        output_buffer: &'a mut [u8],
+    ) -> Result<&'a [u8], WriteError>
     where
         T: FnOnce(&mut TopicWriter) -> Result<(), TE>,
         P: FnOnce(&mut PayloadWriter) -> Result<(), PE>,
@@ -250,51 +257,67 @@ impl OutPublish {
         let mut remaining_len_buffer = [0u8; 4];
         let mut remaining_len_buffer = WriteCursor::new(&mut remaining_len_buffer);
         write_remaining_length(&mut remaining_len_buffer, remaining_len_value)?;
-        let (remaining_len, _)  = remaining_len_buffer.finish();
+        let (remaining_len, _) = remaining_len_buffer.finish();
 
-        let packet_start_index = 4-remaining_len.len();
+        let packet_start_index = 4 - remaining_len.len();
         let dup = self.dup as u8;
         let qos = self.qos as u8;
         let retain = self.retain as u8;
 
         header[packet_start_index] = 0b0011_0000 | retain | (qos << 1) | (dup << 3);
-        header[packet_start_index+1..].copy_from_slice(remaining_len);
+        header[packet_start_index + 1..].copy_from_slice(remaining_len);
 
-        Ok(&output_buffer[packet_start_index..(1+packet_start_index+remaining_len.len()+remaining_len_value)])
+        Ok(&output_buffer[packet_start_index
+            ..(1 + packet_start_index + remaining_len.len() + remaining_len_value)])
     }
 }
 
 #[cfg(test)]
-mod tests
-{
+mod tests {
     use super::*;
     #[test]
     fn out_publish_qos0() {
-        let mut buffer = [0;256];
+        let mut buffer = [0; 256];
         let output = OutPublish {
             dup: false,
             pkid: 0,
             qos: QoS::AtMostOnce,
             retain: false,
-        }.write(|x| x.add_str("hello"), |x| x.add_str("world"), &mut buffer).unwrap();
+        }
+        .write(|x| x.add_str("hello"), |x| x.add_str("world"), &mut buffer)
+        .unwrap();
         assert_eq!(output, b"\x30\x0c\x00\x05helloworld");
     }
 
     #[test]
     fn out_publish_multibyte_remaining_len_qos0() {
-        let mut buffer = [0;256];
+        let mut buffer = [0; 256];
         let output = OutPublish {
             dup: false,
             pkid: 0,
             qos: QoS::AtMostOnce,
             retain: false,
-        }.write(|x| x.add_str("hello"), |x| {
-            core::iter::repeat(1).take(128).enumerate().for_each(|(i, _)| x.add_u8(i as u8).unwrap());
-            Result::<(), WriteError>::Ok(())
-        }, &mut buffer).unwrap();
+        }
+        .write(
+            |x| x.add_str("hello"),
+            |x| {
+                core::iter::repeat(1)
+                    .take(128)
+                    .enumerate()
+                    .for_each(|(i, _)| x.add_u8(i as u8).unwrap());
+                Result::<(), WriteError>::Ok(())
+            },
+            &mut buffer,
+        )
+        .unwrap();
 
-        assert_eq!(output.len(), 1+2+2+5+128);
+        assert_eq!(output.len(), 1 + 2 + 2 + 5 + 128);
         assert_eq!(&output[0..10], b"\x30\x87\x01\x00\x05hello");
-        assert!(output[10..].iter().enumerate().all(|x| x.0 == (*x.1).into()));
+        assert!(
+            output[10..]
+                .iter()
+                .enumerate()
+                .all(|x| x.0 == (*x.1).into())
+        );
     }
 }

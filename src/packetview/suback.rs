@@ -1,6 +1,6 @@
-use core::convert::{TryFrom, TryInto};
-use crate::packetview::{read_u16, write_remaining_length, Error, FixedHeader, QoS, WriteError};
 use crate::packetview::cursor::{Cursor, WriteCursor};
+use crate::packetview::{Error, FixedHeader, QoS, WriteError, read_u16, write_remaining_length};
+use core::convert::{TryFrom, TryInto};
 
 pub struct BytesIterator<'a>(core::slice::Iter<'a, u8>);
 
@@ -30,7 +30,7 @@ impl Iterator for StorageIter<'_> {
 #[derive(Clone, Eq)]
 pub enum Storage<'a> {
     Slice(&'a [SubscribeReasonCode]),
-    Bytes(&'a [u8])
+    Bytes(&'a [u8]),
 }
 
 impl<'a> Storage<'a> {
@@ -74,7 +74,10 @@ pub struct SubAck<'a> {
 
 impl<'a> SubAck<'a> {
     pub fn new(pkid: u16, return_codes: &'a [SubscribeReasonCode]) -> Self {
-        SubAck { pkid, return_codes: Storage::Slice(return_codes) }
+        SubAck {
+            pkid,
+            return_codes: Storage::Slice(return_codes),
+        }
     }
 
     fn len(&self) -> usize {
@@ -95,7 +98,10 @@ impl<'a> SubAck<'a> {
             let _: SubscribeReasonCode = (*byte).try_into()?;
         }
 
-        let suback = SubAck { pkid, return_codes: Storage::Bytes(bytes.as_slice()) };
+        let suback = SubAck {
+            pkid,
+            return_codes: Storage::Bytes(bytes.as_slice()),
+        };
         Ok(suback)
     }
 
@@ -141,8 +147,8 @@ impl TryFrom<u8> for SubscribeReasonCode {
 
 #[cfg(test)]
 mod test {
-    use crate::packetview::parse_fixed_header;
     use super::*;
+    use crate::packetview::parse_fixed_header;
 
     #[test]
     fn suback_parsing_works() {

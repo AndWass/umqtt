@@ -3,6 +3,4 @@ pub enum PublishItem {
     WaitingPubAck(u16),
 }
 
-pub struct PublishState {
-    
-}
+pub struct PublishState {}

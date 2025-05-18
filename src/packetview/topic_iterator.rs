@@ -26,7 +26,7 @@ pub struct TopicIterator<'a, I: Iterator + Sized> {
 
 impl<'a, I> Clone for TopicIterator<'a, I>
 where
-    I: Iterator<Item=&'a str> + Sized + Clone
+    I: Iterator<Item = &'a str> + Sized + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -55,37 +55,35 @@ impl<'a> From<&'a str> for TopicIterator<'a, core::iter::Once<&'a str>> {
     }
 }
 
-impl<'a: 'b, 'b> From<&'a[&'b str]> for TopicIterator<'a, Deref<'b>> {
-    fn from(iter: &'a[&'b str]) -> Self {
+impl<'a: 'b, 'b> From<&'a [&'b str]> for TopicIterator<'a, Deref<'b>> {
+    fn from(iter: &'a [&'b str]) -> Self {
         Self::new(Deref(iter.iter()))
     }
 }
 
-impl<'b, const N: usize> From<[&'b str; N]> for TopicIterator<'b, core::array::IntoIter<&'b str, N>> {
+impl<'b, const N: usize> From<[&'b str; N]>
+    for TopicIterator<'b, core::array::IntoIter<&'b str, N>>
+{
     fn from(value: [&'b str; N]) -> Self {
         Self::new(value.into_iter())
     }
 }
 
-impl<'a, I: Iterator<Item=&'a str> + Sized> Iterator for TopicIterator<'a, I> {
-    type Item=I::Item;
+impl<'a, I: Iterator<Item = &'a str> + Sized> Iterator for TopicIterator<'a, I> {
+    type Item = I::Item;
     fn next(&mut self) -> Option<Self::Item> {
         if self.first {
             self.first = false;
             self.iter.next()
-        }
-        else if !self.prev_was_separator {
+        } else if !self.prev_was_separator {
             match self.iter.peek() {
                 Some(_x) => {
                     self.prev_was_separator = true;
                     Some("/")
-                },
-                None => {
-                    None
                 }
+                None => None,
             }
-        }
-        else {
+        } else {
             self.prev_was_separator = false;
             self.iter.next()
         }
@@ -94,8 +92,8 @@ impl<'a, I: Iterator<Item=&'a str> + Sized> Iterator for TopicIterator<'a, I> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::borrow::ToOwned;
     use super::*;
+    use alloc::borrow::ToOwned;
 
     #[test]
     fn single_string() {

@@ -1,5 +1,5 @@
-use core::ops::{Index, IndexMut};
 use crate::packetview::WriteError;
+use core::ops::{Index, IndexMut};
 
 #[derive(Clone)]
 pub struct Cursor<'a>(pub &'a [u8]);
@@ -75,8 +75,7 @@ impl<'a> WriteCursor<'a> {
     pub fn put_u8(&mut self, byte: u8) -> Result<(), WriteError> {
         if self.next_write_index == self.capacity() {
             Err(WriteError::NotEnoughCapacity)
-        }
-        else {
+        } else {
             self.buffer[self.next_write_index] = byte;
             self.next_write_index += 1;
             Ok(())
@@ -86,8 +85,7 @@ impl<'a> WriteCursor<'a> {
     pub fn put_u16(&mut self, value: u16) -> Result<(), WriteError> {
         if self.remaining_capacity() < 2 {
             Err(WriteError::NotEnoughCapacity)
-        }
-        else {
+        } else {
             let value = value.to_be_bytes();
             self.put_slice(value.as_slice())
         }
@@ -96,9 +94,9 @@ impl<'a> WriteCursor<'a> {
     pub fn put_slice(&mut self, slice: &[u8]) -> Result<(), WriteError> {
         if self.remaining_capacity() < slice.len() {
             Err(WriteError::NotEnoughCapacity)
-        }
-        else {
-            self.buffer[self.next_write_index..self.next_write_index + slice.len()].copy_from_slice(slice);
+        } else {
+            self.buffer[self.next_write_index..self.next_write_index + slice.len()]
+                .copy_from_slice(slice);
             self.next_write_index += slice.len();
             Ok(())
         }

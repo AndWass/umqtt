@@ -1,5 +1,5 @@
-use core::fmt::Debug;
 use super::*;
+use core::fmt::Debug;
 
 pub struct WireBytesIter<'a>(core::slice::Iter<'a, u8>);
 
@@ -9,14 +9,14 @@ impl<'a> Iterator for WireBytesIter<'a> {
         let slice = self.0.as_slice();
         let mut cursor = Cursor(slice);
         let res = read_mqtt_string(&mut cursor).ok()?;
-        self.0 = slice[2+res.len()..].iter();
+        self.0 = slice[2 + res.len()..].iter();
         Some(res)
     }
 }
 
 pub enum StorageIterator<'a> {
     Slice(core::slice::Iter<'a, &'a str>),
-    WireBytes(WireBytesIter<'a>)
+    WireBytes(WireBytesIter<'a>),
 }
 
 impl<'a> Iterator for StorageIterator<'a> {
@@ -86,7 +86,10 @@ impl<'a> Unsubscribe<'a> {
             read_mqtt_string(&mut bytes)?;
         }
 
-        let unsubscribe = Unsubscribe { pkid, topics: Storage::WireBytes(topics) };
+        let unsubscribe = Unsubscribe {
+            pkid,
+            topics: Storage::WireBytes(topics),
+        };
         Ok(unsubscribe)
     }
 
