@@ -2,6 +2,7 @@ use crate::packetview::cursor::{Cursor, WriteCursor};
 use crate::packetview::{
     Error, FixedHeader, QoS, WriteError, qos, read_u16, write_mqtt_string, write_remaining_length,
 };
+use crate::packetview::borrowed_buf::BorrowedBuf;
 
 pub struct BytesIterator<'a>(core::slice::Iter<'a, u8>);
 
@@ -143,6 +144,39 @@ impl<'a> Subscribe<'a> {
         }
 
         Ok(buffer.bytes_written())
+    }
+}
+
+pub struct SubscribeWriter<'a, 'b>(pub(crate) &'a mut BorrowedBuf<'b>);
+
+impl<'a, 'b> SubscribeWriter<'a, 'b> {
+    pub fn add_str(&mut self, topic: &str, qos: QoS) -> Result<(), WriteError> {
+        let len = topic.len();
+        if len > (u16::MAX as usize) {
+            return Err(WriteError::PayloadTooLong);
+        }
+        self.0.add_slice(&((len as u16).to_be_bytes()))?;
+        self.0.add_slice(topic.as_bytes())?;
+        self.0.add_slice(&[qos as u8])
+    }
+
+    pub fn add_separated(&mut self, parts: &[&str], separator: &str, qos: QoS) -> Result<(), WriteError> {
+        self.0.add_slice(&[0, 0])?; // To be filled in later
+        let parts_len = parts.len();
+        for (i, part) in parts.iter().enumerate() {
+            self.0.add_slice(part.as_bytes())?;
+            if i != parts_len - 1 {
+                self.0.add_slice(separator.as_bytes())?;
+            }
+        }
+        let len = self.0.len() - 2;
+        if len > (u16::MAX as usize) {
+            return Err(WriteError::PayloadTooLong);
+        }
+        let len = (len as u16).to_be_bytes();
+        self.0[0] = len[0];
+        self.0[1] = len[1];
+        self.0.add_slice(&[qos as u8])
     }
 }
 
@@ -289,5 +323,30 @@ mod test {
                 0x02  // qos = 2
             ]
         );
+    }
+
+    #[test]
+    fn subscribe_writer() {
+        {
+            let mut buffer = [0; 256];
+            let mut borrowed = BorrowedBuf::new(&mut buffer);
+            let mut writer = SubscribeWriter(&mut borrowed);
+            writer.add_str("hello", QoS::AtMostOnce).unwrap();
+            assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x05hello\x00");
+        }
+        {
+            let mut buffer = [0; 256];
+            let mut borrowed = BorrowedBuf::new(&mut buffer);
+            let mut writer = SubscribeWriter(&mut borrowed);
+            writer.add_separated(&["hello"], "/", QoS::AtMostOnce).unwrap();
+            assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x05hello\x00");
+        }
+        {
+            let mut buffer = [0; 256];
+            let mut borrowed = BorrowedBuf::new(&mut buffer);
+            let mut writer = SubscribeWriter(&mut borrowed);
+            writer.add_separated(&["hello", "world"], "/", QoS::AtMostOnce).unwrap();
+            assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x0bhello/world\x00");
+        }
     }
 }

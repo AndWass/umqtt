@@ -86,10 +86,9 @@
 //!         stream: None,
 //!         epoch: tokio::time::Instant::now(),
 //!     };
-//!     let subscriptions = [SubscribeFilter::new("/umqtt/#", QoS::AtLeastOnce)];
 //!     let mut client = NanoClient::new(platform, tx_buffer.as_mut_slice(), rx_buffer.as_mut_slice());
 //!     loop {
-//!         let _connack = client.connect(&options, &subscriptions).await;
+//!         let _connack = client.connect(&options).await;
 //!         run_client(&mut client).await;
 //!         tokio::time::sleep(Duration::from_secs(20)).await;
 //!     }
@@ -107,14 +106,15 @@ use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
 use crate::packetview::publish::{OutPublish, PayloadWriter, TopicWriter};
 use crate::packetview::pubrec::PubRec;
-use crate::packetview::subscribe::{Subscribe, SubscribeFilter};
-use crate::packetview::{QoS, WriteError};
+use crate::packetview::subscribe::{SubscribeWriter};
+use crate::packetview::{write_remaining_length, QoS, WriteError};
 use crate::transport_client::{Notification, TransportClient};
 use core::fmt::{Debug, Formatter};
 
 pub use notification::*;
 pub use platform::*;
 use buffer::Buffer;
+use crate::packetview::borrowed_buf::BorrowedBuf;
 
 /// The error type used by [`NanoClient`]
 pub enum Error<P: Platform> {
@@ -242,6 +242,26 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         }
     }
 
+    async fn write_subscribe<S, SE>(&mut self, subscriptions: S) -> Result<(), Error<P>>
+    where
+        S: FnOnce(&mut SubscribeWriter) -> Result<(), SE>,
+        WriteError: From<SE>,
+    {
+        let mut borrowed_buf = BorrowedBuf::new(&mut self.tx_buffer);
+        subscriptions(&mut SubscribeWriter(&mut borrowed_buf)).map_err(|x| Error::WriteError(x.into()))?;
+        let mut header = [0;7];
+        header[0] = 0x82;
+        let remaining_len_len = write_remaining_length(&mut crate::packetview::cursor::WriteCursor::new(&mut header[1..]), borrowed_buf.len() + 2).map_err(Error::WriteError)?;
+        header[remaining_len_len+1] = 0;
+        header[remaining_len_len+2] = 1;
+
+        Self::write_buffer(&mut self.transport_client, &mut self.platform, &header[..remaining_len_len+3]).await?;
+        let payload_len = borrowed_buf.len();
+        Self::write_buffer(&mut self.transport_client, &mut self.platform, &self.tx_buffer[..payload_len]).await?;
+
+        Ok(())
+    }
+
     /// Create a new [`NanoClient`]
     ///
     /// # Arguments
@@ -270,7 +290,6 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     /// # Arguments
     ///
     ///   * `connect_options` - The options to use when connecting and authenticating with the broker.
-    ///   * `subscriptions` - The subscriptions to subscribe to after the client has connected.
     ///
     /// # Returns
     ///
@@ -279,11 +298,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     ///
     /// **Note:** The [`ConnAck`] might report an error from the server. In that case the client
     /// assumes that the transport has closed as well.
-    pub async fn connect<'b>(
-        &mut self,
-        connect_options: &ConnectOptions<'_>,
-        subscriptions: &'b [SubscribeFilter<'b>],
-    ) -> Result<ConnAck, Error<P>> {
+    pub async fn connect(&mut self, connect_options: &ConnectOptions<'_>) -> Result<ConnAck, Error<P>> {
         self.connect_transport().await?;
         self.transport_client.on_transport_opened(connect_options);
         self.rx_buffer.reset();
@@ -295,14 +310,39 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         let connack = self.read_connack().await?;
         if connack.code != ConnectReturnCode::Success {
             self.transport_client.on_transport_closed();
-            return Ok(connack);
         }
-        if !subscriptions.is_empty() {
-            let subscribe = Subscribe::new(1, subscriptions);
-            let out_size = subscribe
-                .write(self.tx_buffer)
-                .map_err(|e| Error::WriteError(e))?;
-            self.write_all(out_size).await?;
+
+        return Ok(connack);
+    }
+
+    /// Connect to the MQTT broker.
+    ///
+    /// The [`Platform`] is expected to know which broker to connect to.
+    ///
+    /// # Arguments
+    ///
+    ///   * `connect_options` - The options to use when connecting and authenticating with the broker.
+    ///   * `subscriptions` - A closure used to format all the subscriptions.
+    ///
+    /// # Returns
+    ///
+    /// A result containing either the [`ConnAck`] response from the server, or an error if
+    /// some error ocurred.
+    ///
+    /// **Note:** The [`ConnAck`] might report an error from the server. In that case the client
+    /// assumes that the transport has closed as well.
+    pub async fn connect_subscribe<'b, F, FE>(
+        &mut self,
+        connect_options: &ConnectOptions<'_>,
+        subscriptions: F,
+    ) -> Result<ConnAck, Error<P>>
+    where
+        F: FnOnce(&mut SubscribeWriter) -> Result<(), FE>,
+        WriteError: From<FE>
+    {
+        let connack = self.connect(connect_options).await?;
+        if connack.code.is_success() {
+            self.write_subscribe(subscriptions).await?;
         }
         Ok(connack)
     }
@@ -503,7 +543,9 @@ mod tests {
     use alloc::rc::Rc;
     use alloc::vec::Vec;
     use core::cell::RefCell;
+    use core::ops::Deref;
     use core::time::Duration;
+    use crate::packetview::QoS;
 
     #[derive(Default)]
     struct TestPlatformData {
@@ -596,7 +638,31 @@ mod tests {
             login: None,
         };
 
-        let _res = spin_on::spin_on(client.connect(&connect_options, &[])).unwrap();
+        let _res = spin_on::spin_on(client.connect(&connect_options)).unwrap();
         assert_eq!(data.borrow().packets_written.len(), 1);
+    }
+
+    #[test]
+    fn subscribe_packet() {
+        let platform = TestPlatform::new();
+        let data = platform.data.clone();
+        data.borrow_mut()
+            .packets_to_read
+            .push_back(Box::new([0x20, 2, 0, 0])); // CONNACK.
+        let mut tx_buffer = [0u8; 256];
+        let mut rx_buffer = [0u8; 256];
+        let mut client = NanoClient::new(platform, &mut tx_buffer, &mut rx_buffer);
+
+        let connect_options = ConnectOptions {
+            keep_alive: 10,
+            clean_session: true,
+            client_id: "test",
+            last_will: None,
+            login: None,
+        };
+
+        let _res = spin_on::spin_on(client.connect_subscribe(&connect_options, |x| x.add_str("hello", QoS::AtMostOnce))).unwrap();
+        assert_eq!(data.borrow().packets_written[1].deref(), [0x82, 10, 0, 1]);
+        assert_eq!(data.borrow().packets_written[2].deref(), b"\x00\x05hello\x00");
     }
 }

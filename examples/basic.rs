@@ -2,9 +2,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use umqtt::nano_client::{ClientNotification, NanoClient};
-use umqtt::packetview::QoS;
 use umqtt::packetview::connect::ConnectOptions;
-use umqtt::packetview::subscribe::SubscribeFilter;
 use umqtt::time::Instant;
 
 struct Platform {
@@ -87,10 +85,9 @@ async fn main() {
         stream: None,
         epoch: tokio::time::Instant::now(),
     };
-    let subscriptions = [SubscribeFilter::new("/andwass/#", QoS::AtLeastOnce)];
     let mut client = NanoClient::new(platform, tx_buffer.as_mut_slice(), rx_buffer.as_mut_slice());
     loop {
-        let connack = client.connect(&options, &subscriptions).await;
+        let connack = client.connect(&options).await;
         if let Ok(connack) = connack {
             if connack.code.is_success() {
                 println!("Connected");
