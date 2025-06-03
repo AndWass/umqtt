@@ -3,6 +3,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use umqtt::nano_client::{ClientNotification, NanoClient};
 use umqtt::packetview::connect::ConnectOptions;
+use umqtt::packetview::QoS;
 use umqtt::time::Instant;
 
 struct Platform {
@@ -46,7 +47,6 @@ impl umqtt::nano_client::Platform for Platform {
 async fn run_client<P: umqtt::nano_client::Platform>(
     client: &mut NanoClient<'_, P>,
 ) -> Result<(), umqtt::nano_client::Error<P>> {
-    let start_time = tokio::time::Instant::now();
     loop {
         let tick_result = client.next_notification().await?;
         match &tick_result {
@@ -63,7 +63,6 @@ async fn run_client<P: umqtt::nano_client::Platform>(
                 println!("Sending ping");
             }
         }
-        println!("Uptime: {:?}", (tokio::time::Instant::now() - start_time));
         // This needs to be stored in a seperate variable, otherwise the borrow-checker will complain!
         let tick_result = tick_result.complete();
         client.complete_notification(tick_result).await?;
@@ -87,7 +86,11 @@ async fn main() {
     };
     let mut client = NanoClient::new(platform, tx_buffer.as_mut_slice(), rx_buffer.as_mut_slice());
     loop {
-        let connack = client.connect(&options).await;
+        let connack = client.connect_subscribe(&options, |s| {
+            s.add_str("umqtt/hello", QoS::AtMostOnce)?;
+            // Equivalent to adding a subscription for umqtt/world
+            s.add_separated(&["umqtt", "world"], "/", QoS::AtMostOnce)
+        }).await;
         if let Ok(connack) = connack {
             if connack.code.is_success() {
                 println!("Connected");

@@ -166,6 +166,7 @@ impl SubscribeWriter<'_, '_> {
         separator: &str,
         qos: QoS,
     ) -> Result<(), WriteError> {
+        let start_len = self.0.len();
         self.0.add_slice(&[0, 0])?; // To be filled in later
         let parts_len = parts.len();
         for (i, part) in parts.iter().enumerate() {
@@ -174,13 +175,13 @@ impl SubscribeWriter<'_, '_> {
                 self.0.add_slice(separator.as_bytes())?;
             }
         }
-        let len = self.0.len() - 2;
+        let len = self.0.len() - start_len - 2;
         if len > (u16::MAX as usize) {
             return Err(WriteError::PayloadTooLong);
         }
         let len = (len as u16).to_be_bytes();
-        self.0[0] = len[0];
-        self.0[1] = len[1];
+        self.0[start_len] = len[0];
+        self.0[start_len+1] = len[1];
         self.0.add_slice(&[qos as u8])
     }
 }
@@ -356,6 +357,18 @@ mod test {
                 .add_separated(&["hello", "world"], "/", QoS::AtMostOnce)
                 .unwrap();
             assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x0bhello/world\x00");
+        }
+
+        {
+            let mut buffer = [0; 256];
+            let mut borrowed = BorrowedBuf::new(&mut buffer);
+            let mut writer = SubscribeWriter(&mut borrowed);
+            writer
+                .add_separated(&["hello", "world"], "/", QoS::AtMostOnce)
+                .unwrap();
+            assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x0bhello/world\x00");
+            writer.add_separated(&["ab", "cd"], "/", QoS::AtMostOnce).unwrap();
+            assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x0bhello/world\x00\x00\x05ab/cd\x00");
         }
     }
 }
