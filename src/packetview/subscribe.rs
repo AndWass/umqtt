@@ -181,7 +181,7 @@ impl SubscribeWriter<'_, '_> {
         }
         let len = (len as u16).to_be_bytes();
         self.0[start_len] = len[0];
-        self.0[start_len+1] = len[1];
+        self.0[start_len + 1] = len[1];
         self.0.add_slice(&[qos as u8])
     }
 }
@@ -367,8 +367,13 @@ mod test {
                 .add_separated(&["hello", "world"], "/", QoS::AtMostOnce)
                 .unwrap();
             assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x0bhello/world\x00");
-            writer.add_separated(&["ab", "cd"], "/", QoS::AtMostOnce).unwrap();
-            assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x0bhello/world\x00\x00\x05ab/cd\x00");
+            writer
+                .add_separated(&["ab", "cd"], "/", QoS::AtMostOnce)
+                .unwrap();
+            assert_eq!(
+                &writer.0[0..writer.0.len()],
+                b"\x00\x0bhello/world\x00\x00\x05ab/cd\x00"
+            );
         }
     }
 }
