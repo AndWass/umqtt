@@ -247,7 +247,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         S: FnOnce(&mut SubscribeWriter) -> Result<(), SE>,
         WriteError: From<SE>,
     {
-        let mut borrowed_buf = BorrowedBuf::new(&mut self.tx_buffer);
+        let mut borrowed_buf = BorrowedBuf::new(self.tx_buffer);
         subscriptions(&mut SubscribeWriter(&mut borrowed_buf))
             .map_err(|x| Error::WriteError(x.into()))?;
         let mut header = [0; 7];
@@ -330,7 +330,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
             self.transport_client.on_transport_closed();
         }
 
-        return Ok(connack);
+        Ok(connack)
     }
 
     /// Connect to the MQTT broker.
@@ -349,7 +349,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     ///
     /// **Note:** The [`ConnAck`] might report an error from the server. In that case the client
     /// assumes that the transport has closed as well.
-    pub async fn connect_subscribe<'b, F, FE>(
+    pub async fn connect_subscribe<F, FE>(
         &mut self,
         connect_options: &ConnectOptions<'_>,
         subscriptions: F,

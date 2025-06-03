@@ -149,7 +149,7 @@ impl<'a> Subscribe<'a> {
 
 pub struct SubscribeWriter<'a, 'b>(pub(crate) &'a mut BorrowedBuf<'b>);
 
-impl<'a, 'b> SubscribeWriter<'a, 'b> {
+impl SubscribeWriter<'_, '_> {
     pub fn add_str(&mut self, topic: &str, qos: QoS) -> Result<(), WriteError> {
         let len = topic.len();
         if len > (u16::MAX as usize) {
