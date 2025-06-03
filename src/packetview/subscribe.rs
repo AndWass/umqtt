@@ -1,8 +1,8 @@
+use crate::packetview::borrowed_buf::BorrowedBuf;
 use crate::packetview::cursor::{Cursor, WriteCursor};
 use crate::packetview::{
     Error, FixedHeader, QoS, WriteError, qos, read_u16, write_mqtt_string, write_remaining_length,
 };
-use crate::packetview::borrowed_buf::BorrowedBuf;
 
 pub struct BytesIterator<'a>(core::slice::Iter<'a, u8>);
 
@@ -160,7 +160,12 @@ impl<'a, 'b> SubscribeWriter<'a, 'b> {
         self.0.add_slice(&[qos as u8])
     }
 
-    pub fn add_separated(&mut self, parts: &[&str], separator: &str, qos: QoS) -> Result<(), WriteError> {
+    pub fn add_separated(
+        &mut self,
+        parts: &[&str],
+        separator: &str,
+        qos: QoS,
+    ) -> Result<(), WriteError> {
         self.0.add_slice(&[0, 0])?; // To be filled in later
         let parts_len = parts.len();
         for (i, part) in parts.iter().enumerate() {
@@ -338,14 +343,18 @@ mod test {
             let mut buffer = [0; 256];
             let mut borrowed = BorrowedBuf::new(&mut buffer);
             let mut writer = SubscribeWriter(&mut borrowed);
-            writer.add_separated(&["hello"], "/", QoS::AtMostOnce).unwrap();
+            writer
+                .add_separated(&["hello"], "/", QoS::AtMostOnce)
+                .unwrap();
             assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x05hello\x00");
         }
         {
             let mut buffer = [0; 256];
             let mut borrowed = BorrowedBuf::new(&mut buffer);
             let mut writer = SubscribeWriter(&mut borrowed);
-            writer.add_separated(&["hello", "world"], "/", QoS::AtMostOnce).unwrap();
+            writer
+                .add_separated(&["hello", "world"], "/", QoS::AtMostOnce)
+                .unwrap();
             assert_eq!(&writer.0[0..writer.0.len()], b"\x00\x0bhello/world\x00");
         }
     }

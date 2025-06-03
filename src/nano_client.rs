@@ -95,9 +95,9 @@
 //! }
 //! ```
 
+mod buffer;
 mod notification;
 mod platform;
-mod buffer;
 
 use crate::packetview::connack::{ConnAck, ConnectReturnCode};
 use crate::packetview::connect::ConnectOptions;
@@ -106,15 +106,15 @@ use crate::packetview::puback::PubAck;
 use crate::packetview::pubcomp::PubComp;
 use crate::packetview::publish::{OutPublish, PayloadWriter, TopicWriter};
 use crate::packetview::pubrec::PubRec;
-use crate::packetview::subscribe::{SubscribeWriter};
-use crate::packetview::{write_remaining_length, QoS, WriteError};
+use crate::packetview::subscribe::SubscribeWriter;
+use crate::packetview::{QoS, WriteError, write_remaining_length};
 use crate::transport_client::{Notification, TransportClient};
 use core::fmt::{Debug, Formatter};
 
+use crate::packetview::borrowed_buf::BorrowedBuf;
+use buffer::Buffer;
 pub use notification::*;
 pub use platform::*;
-use buffer::Buffer;
-use crate::packetview::borrowed_buf::BorrowedBuf;
 
 /// The error type used by [`NanoClient`]
 pub enum Error<P: Platform> {
@@ -248,16 +248,31 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         WriteError: From<SE>,
     {
         let mut borrowed_buf = BorrowedBuf::new(&mut self.tx_buffer);
-        subscriptions(&mut SubscribeWriter(&mut borrowed_buf)).map_err(|x| Error::WriteError(x.into()))?;
-        let mut header = [0;7];
+        subscriptions(&mut SubscribeWriter(&mut borrowed_buf))
+            .map_err(|x| Error::WriteError(x.into()))?;
+        let mut header = [0; 7];
         header[0] = 0x82;
-        let remaining_len_len = write_remaining_length(&mut crate::packetview::cursor::WriteCursor::new(&mut header[1..]), borrowed_buf.len() + 2).map_err(Error::WriteError)?;
-        header[remaining_len_len+1] = 0;
-        header[remaining_len_len+2] = 1;
+        let remaining_len_len = write_remaining_length(
+            &mut crate::packetview::cursor::WriteCursor::new(&mut header[1..]),
+            borrowed_buf.len() + 2,
+        )
+        .map_err(Error::WriteError)?;
+        header[remaining_len_len + 1] = 0;
+        header[remaining_len_len + 2] = 1;
 
-        Self::write_buffer(&mut self.transport_client, &mut self.platform, &header[..remaining_len_len+3]).await?;
+        Self::write_buffer(
+            &mut self.transport_client,
+            &mut self.platform,
+            &header[..remaining_len_len + 3],
+        )
+        .await?;
         let payload_len = borrowed_buf.len();
-        Self::write_buffer(&mut self.transport_client, &mut self.platform, &self.tx_buffer[..payload_len]).await?;
+        Self::write_buffer(
+            &mut self.transport_client,
+            &mut self.platform,
+            &self.tx_buffer[..payload_len],
+        )
+        .await?;
 
         Ok(())
     }
@@ -298,7 +313,10 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     ///
     /// **Note:** The [`ConnAck`] might report an error from the server. In that case the client
     /// assumes that the transport has closed as well.
-    pub async fn connect(&mut self, connect_options: &ConnectOptions<'_>) -> Result<ConnAck, Error<P>> {
+    pub async fn connect(
+        &mut self,
+        connect_options: &ConnectOptions<'_>,
+    ) -> Result<ConnAck, Error<P>> {
         self.connect_transport().await?;
         self.transport_client.on_transport_opened(connect_options);
         self.rx_buffer.reset();
@@ -338,7 +356,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
     ) -> Result<ConnAck, Error<P>>
     where
         F: FnOnce(&mut SubscribeWriter) -> Result<(), FE>,
-        WriteError: From<FE>
+        WriteError: From<FE>,
     {
         let connack = self.connect(connect_options).await?;
         if connack.code.is_success() {
@@ -479,7 +497,11 @@ impl<'a, P: Platform> NanoClient<'a, P> {
         Self::write_buffer(&mut self.transport_client, &mut self.platform, written).await
     }
 
-    pub async fn send_publish_qos0<T, D, TE, DE>(&mut self, topic: T, payload: D) -> Result<(), Error<P>>
+    pub async fn send_publish_qos0<T, D, TE, DE>(
+        &mut self,
+        topic: T,
+        payload: D,
+    ) -> Result<(), Error<P>>
     where
         T: FnOnce(&mut TopicWriter) -> Result<(), TE>,
         D: FnOnce(&mut PayloadWriter) -> Result<(), DE>,
@@ -536,6 +558,7 @@ impl<'a, P: Platform> NanoClient<'a, P> {
 #[cfg(test)]
 mod tests {
     use crate::nano_client::{NanoClient, Platform};
+    use crate::packetview::QoS;
     use crate::packetview::connect::ConnectOptions;
     use crate::time::Instant;
     use alloc::boxed::Box;
@@ -545,7 +568,6 @@ mod tests {
     use core::cell::RefCell;
     use core::ops::Deref;
     use core::time::Duration;
-    use crate::packetview::QoS;
 
     #[derive(Default)]
     struct TestPlatformData {
@@ -661,8 +683,14 @@ mod tests {
             login: None,
         };
 
-        let _res = spin_on::spin_on(client.connect_subscribe(&connect_options, |x| x.add_str("hello", QoS::AtMostOnce))).unwrap();
+        let _res = spin_on::spin_on(
+            client.connect_subscribe(&connect_options, |x| x.add_str("hello", QoS::AtMostOnce)),
+        )
+        .unwrap();
         assert_eq!(data.borrow().packets_written[1].deref(), [0x82, 10, 0, 1]);
-        assert_eq!(data.borrow().packets_written[2].deref(), b"\x00\x05hello\x00");
+        assert_eq!(
+            data.borrow().packets_written[2].deref(),
+            b"\x00\x05hello\x00"
+        );
     }
 }

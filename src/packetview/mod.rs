@@ -308,7 +308,10 @@ fn write_mqtt_string(stream: &mut WriteCursor, string: &str) -> Result<(), Write
 }
 
 /// Writes remaining length to stream and returns number of bytes for remaining length
-pub(crate) fn write_remaining_length(stream: &mut WriteCursor, len: usize) -> Result<usize, WriteError> {
+pub(crate) fn write_remaining_length(
+    stream: &mut WriteCursor,
+    len: usize,
+) -> Result<usize, WriteError> {
     if len > 268_435_455 {
         return Err(WriteError::PayloadTooLong);
     }
