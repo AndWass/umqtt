@@ -6,7 +6,7 @@ pub trait Platform {
     /// Platform-specific error for all the platform methods.
     type Error;
     /// Connect the underlying transport. If already connected it should reconnect again.
-    async fn connect_transport(&mut self) -> Result<(), Self::Error>;
+    //async fn connect_transport(&mut self) -> Result<(), Self::Error>;
     /// Write all the data in `buf` to the underlying transport.
     ///
     /// # Arguments
